@@ -37,6 +37,10 @@ const MAPPING = {
   "arrow.down.circle.fill": "arrow-circle-down",
   "minus.circle.fill": "remove-circle",
   "line.3.horizontal.decrease": "filter-list",
+  "square.and.arrow.up": "ios-share",
+  "doc.text.fill": "description",
+  "doc.on.doc.fill": "file-copy",
+  "doc.richtext.fill": "article",
 } as IconMapping;
 
 /**

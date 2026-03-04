@@ -19,6 +19,7 @@ import { useSites } from "@/lib/sites-context";
 import { getPresetData, formatLargeNumber, type PresetSiteData } from "@/lib/preset-data";
 import { BarChart, PieChart, HorizontalBar, formatNumber } from "@/components/charts";
 import { getApiBaseUrl } from "@/constants/oauth";
+import { exportCsv, exportHtmlReport } from "@/lib/export-utils";
 
 interface DiscoveredCompetitor {
   domain: string;
@@ -46,6 +47,8 @@ export default function DashboardScreen() {
   const [discovering, setDiscovering] = useState(false);
   const [discoveredCompetitors, setDiscoveredCompetitors] = useState<DiscoveredCompetitor[]>([]);
   const [addingCompetitors, setAddingCompetitors] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -218,6 +221,18 @@ export default function DashboardScreen() {
           <Text className="text-sm text-muted mt-1">
             ホームページの競合サイトを分析・比較
           </Text>
+        </View>
+
+        {/* Header Actions */}
+        <View className="flex-row px-5 mt-2 gap-2">
+          <TouchableOpacity
+            className="flex-row items-center bg-primary/10 border border-primary/30 rounded-lg px-3 py-2"
+            onPress={() => setShowExportModal(true)}
+            activeOpacity={0.7}
+          >
+            <IconSymbol name="square.and.arrow.up" size={16} color={colors.primary} />
+            <Text className="text-xs font-medium text-primary ml-1.5">レポート出力</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Quick Stats */}
@@ -519,6 +534,124 @@ export default function DashboardScreen() {
         </View>
       </Modal>
 
+      {/* Export Modal */}
+      <Modal visible={showExportModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View className="bg-background rounded-t-3xl p-6" style={styles.modalContent}>
+            <View className="flex-row justify-between items-center mb-4">
+              <Text className="text-xl font-bold text-foreground">レポート出力</Text>
+              <TouchableOpacity onPress={() => setShowExportModal(false)}>
+                <IconSymbol name="xmark" size={24} color={colors.muted} />
+              </TouchableOpacity>
+            </View>
+
+            <Text className="text-sm text-muted mb-4">
+              分析データをCSVまたはHTMLレポートとして出力します。
+            </Text>
+
+            {exporting ? (
+              <View className="items-center py-8">
+                <ActivityIndicator size="large" color={colors.primary} />
+                <Text className="text-sm text-muted mt-4">エクスポート中...</Text>
+              </View>
+            ) : (
+              <View className="gap-3">
+                <Text className="text-xs font-semibold text-muted uppercase tracking-wider">CSVエクスポート</Text>
+                <ExportButton
+                  icon="doc.text.fill"
+                  title="エンゲージメントデータ"
+                  subtitle="セッション数、滞在時間、直帰率など"
+                  colors={colors}
+                  onPress={async () => {
+                    setExporting(true);
+                    try {
+                      await exportCsv(sites, "engagement");
+                      Alert.alert("完了", "エンゲージメントデータをエクスポートしました");
+                    } catch (e) {
+                      Alert.alert("エラー", "エクスポートに失敗しました");
+                    } finally {
+                      setExporting(false);
+                    }
+                  }}
+                />
+                <ExportButton
+                  icon="chart.bar.fill"
+                  title="チャネル別トラフィック"
+                  subtitle="Direct、Organic、Paid、Socialなど"
+                  colors={colors}
+                  onPress={async () => {
+                    setExporting(true);
+                    try {
+                      await exportCsv(sites, "channel");
+                      Alert.alert("完了", "チャネルデータをエクスポートしました");
+                    } catch (e) {
+                      Alert.alert("エラー", "エクスポートに失敗しました");
+                    } finally {
+                      setExporting(false);
+                    }
+                  }}
+                />
+                <ExportButton
+                  icon="magnifyingglass"
+                  title="キーワードデータ"
+                  subtitle="各サイトの流入キーワード一覧"
+                  colors={colors}
+                  onPress={async () => {
+                    setExporting(true);
+                    try {
+                      await exportCsv(sites, "keyword");
+                      Alert.alert("完了", "キーワードデータをエクスポートしました");
+                    } catch (e) {
+                      Alert.alert("エラー", "エクスポートに失敗しました");
+                    } finally {
+                      setExporting(false);
+                    }
+                  }}
+                />
+                <ExportButton
+                  icon="doc.on.doc.fill"
+                  title="全データ統合CSV"
+                  subtitle="エンゲージメント+チャネル+キーワード"
+                  colors={colors}
+                  onPress={async () => {
+                    setExporting(true);
+                    try {
+                      await exportCsv(sites, "full");
+                      Alert.alert("完了", "全データをエクスポートしました");
+                    } catch (e) {
+                      Alert.alert("エラー", "エクスポートに失敗しました");
+                    } finally {
+                      setExporting(false);
+                    }
+                  }}
+                />
+
+                <View className="mt-2">
+                  <Text className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">HTMLレポート</Text>
+                  <ExportButton
+                    icon="doc.richtext.fill"
+                    title="競合分析レポート（HTML）"
+                    subtitle="印刷でPDF化可能な総合レポート"
+                    colors={colors}
+                    onPress={async () => {
+                      setExporting(true);
+                      try {
+                        await exportHtmlReport(sites);
+                        Alert.alert("完了", "HTMLレポートを生成しました");
+                      } catch (e) {
+                        Alert.alert("エラー", "レポート生成に失敗しました");
+                      } finally {
+                        setExporting(false);
+                      }
+                    }}
+                  />
+                </View>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
+
       {/* Competitor Discovery Modal */}
       <Modal visible={showCompetitorModal} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
@@ -730,6 +863,47 @@ function SiteCard({
           </View>
         </View>
       )}
+    </TouchableOpacity>
+  );
+}
+
+function ExportButton({
+  icon,
+  title,
+  subtitle,
+  colors,
+  onPress,
+}: {
+  icon: string;
+  title: string;
+  subtitle: string;
+  colors: ReturnType<typeof useColors>;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      className="flex-row items-center bg-surface border border-border rounded-xl p-4"
+      onPress={onPress}
+      activeOpacity={0.7}
+    >
+      <View
+        style={{
+          width: 40,
+          height: 40,
+          borderRadius: 10,
+          backgroundColor: colors.primary + "15",
+          alignItems: "center",
+          justifyContent: "center",
+          marginRight: 12,
+        }}
+      >
+        <IconSymbol name={icon as any} size={20} color={colors.primary} />
+      </View>
+      <View className="flex-1">
+        <Text className="text-sm font-semibold text-foreground">{title}</Text>
+        <Text className="text-xs text-muted mt-0.5">{subtitle}</Text>
+      </View>
+      <IconSymbol name="chevron.right" size={16} color={colors.muted} />
     </TouchableOpacity>
   );
 }

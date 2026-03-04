@@ -5,6 +5,7 @@ import {
   View,
   TouchableOpacity,
   StyleSheet,
+  Alert,
 } from "react-native";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
@@ -12,6 +13,7 @@ import { useSites } from "@/lib/sites-context";
 import { BarChart, HorizontalBar, PieChart, formatNumber, CHART_COLORS } from "@/components/charts";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { getPresetData, formatLargeNumber, type PresetSiteData } from "@/lib/preset-data";
+import { exportCsv, exportHtmlReport } from "@/lib/export-utils";
 
 export default function CompareScreen() {
   const colors = useColors();
@@ -38,7 +40,26 @@ export default function CompareScreen() {
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
         {/* Header */}
         <View className="px-5 pt-4 pb-2">
-          <Text className="text-2xl font-bold text-foreground">競合比較</Text>
+          <View className="flex-row justify-between items-center">
+            <Text className="text-2xl font-bold text-foreground">競合比較</Text>
+            {selectedSites.length >= 2 && (
+              <TouchableOpacity
+                className="flex-row items-center bg-primary/10 border border-primary/30 rounded-lg px-3 py-2"
+                onPress={async () => {
+                  try {
+                    await exportHtmlReport(selectedSites);
+                    Alert.alert("完了", "比較レポートをエクスポートしました");
+                  } catch (e) {
+                    Alert.alert("エラー", "エクスポートに失敗しました");
+                  }
+                }}
+                activeOpacity={0.7}
+              >
+                <IconSymbol name="square.and.arrow.up" size={16} color={colors.primary} />
+                <Text className="text-xs font-medium text-primary ml-1.5">レポート</Text>
+              </TouchableOpacity>
+            )}
+          </View>
           <Text className="text-sm text-muted mt-1">
             サイトを選択して指標を比較
           </Text>

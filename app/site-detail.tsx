@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   FlatList,
+  Alert,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ScreenContainer } from "@/components/screen-container";
@@ -15,6 +16,7 @@ import { useColors } from "@/hooks/use-colors";
 import { trpc } from "@/lib/trpc";
 import { BarChart, LineChart, PieChart, HorizontalBar, formatNumber } from "@/components/charts";
 import { getPresetData, formatLargeNumber, type PresetSiteData } from "@/lib/preset-data";
+import { exportCsv, exportHtmlReport } from "@/lib/export-utils";
 
 type TabId = "overview" | "channels" | "keywords" | "speed";
 
@@ -57,6 +59,20 @@ export default function SiteDetailScreen() {
           </Text>
           <Text className="text-xs text-muted">{domain}</Text>
         </View>
+        <TouchableOpacity
+          onPress={async () => {
+            try {
+              const siteData = [{ domain, name: siteName, isOwn: false }];
+              await exportCsv(siteData, "full");
+              Alert.alert("完了", `${siteName}のデータをエクスポートしました`);
+            } catch (e) {
+              Alert.alert("エラー", "エクスポートに失敗しました");
+            }
+          }}
+          style={{ padding: 8 }}
+        >
+          <IconSymbol name="square.and.arrow.up" size={22} color={colors.primary} />
+        </TouchableOpacity>
       </View>
 
       {/* Tab Bar */}
