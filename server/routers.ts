@@ -423,6 +423,144 @@ export const appRouter = router({
         }
       }),
 
+    // 統合データ更新: SimilarWeb + DataForSEO + PageSpeed を一括取得
+    refreshSiteData: publicProcedure
+      .input(
+        z.object({
+          domain: z.string(),
+          locationCode: z.number().default(2392),
+          languageCode: z.string().default("ja"),
+        })
+      )
+      .mutation(async ({ input }) => {
+        const results: Record<string, any> = {};
+        const errors: string[] = [];
+
+        // 1. SimilarWeb: Traffic Sources
+        try {
+          const ts = await callDataApi("Similarweb/get_traffic_sources_desktop", {
+            pathParams: { domain: input.domain },
+            query: {
+              country: "world",
+              granularity: "monthly",
+              main_domain_only: false,
+              start_date: getDefaultStartDate(),
+              end_date: getDefaultEndDate(),
+            },
+          });
+          results.trafficSources = ts;
+        } catch (e: any) {
+          errors.push(`TrafficSources: ${e.message}`);
+        }
+
+        // 2. SimilarWeb: Total Visits
+        try {
+          const tv = await callDataApi("Similarweb/get_visits_total", {
+            pathParams: { domain: input.domain },
+            query: {
+              country: "world",
+              granularity: "monthly",
+              main_domain_only: false,
+              start_date: getDefaultStartDate(),
+              end_date: getDefaultEndDate(),
+            },
+          });
+          results.totalVisits = tv;
+        } catch (e: any) {
+          errors.push(`TotalVisits: ${e.message}`);
+        }
+
+        // 3. SimilarWeb: Bounce Rate
+        try {
+          const br = await callDataApi("Similarweb/get_bounce_rate", {
+            pathParams: { domain: input.domain },
+            query: {
+              country: "world",
+              granularity: "monthly",
+              main_domain_only: false,
+              start_date: getDefaultStartDate(),
+              end_date: getDefaultEndDate(),
+            },
+          });
+          results.bounceRate = br;
+        } catch (e: any) {
+          errors.push(`BounceRate: ${e.message}`);
+        }
+
+        // 4. SimilarWeb: Unique Visitors
+        try {
+          const uv = await callDataApi("Similarweb/get_unique_visit", {
+            pathParams: { domain: input.domain },
+            query: {
+              main_domain_only: false,
+              start_date: getDefaultStartDate(),
+              end_date: getDefaultEndDate(),
+            },
+          });
+          results.uniqueVisitors = uv;
+        } catch (e: any) {
+          errors.push(`UniqueVisitors: ${e.message}`);
+        }
+
+        // 5. SimilarWeb: Global Rank
+        try {
+          const gr = await callDataApi("Similarweb/get_global_rank", {
+            pathParams: { domain: input.domain },
+            query: {
+              main_domain_only: false,
+              start_date: getDefaultStartDate(),
+              end_date: getDefaultEndDate(),
+            },
+          });
+          results.globalRank = gr;
+        } catch (e: any) {
+          errors.push(`GlobalRank: ${e.message}`);
+        }
+
+        // 6. DataForSEO: Domain Keywords
+        try {
+          const kw = await callDataForSEO(
+            "/dataforseo_labs/google/ranked_keywords/live",
+            [
+              {
+                target: input.domain,
+                location_code: input.locationCode,
+                language_code: input.languageCode,
+                limit: 20,
+              },
+            ]
+          );
+          results.keywords = kw;
+        } catch (e: any) {
+          errors.push(`Keywords: ${e.message}`);
+        }
+
+        // 7. Google PageSpeed
+        try {
+          const ps = await callPageSpeedAPI(`https://${input.domain}`, "mobile");
+          const lhr = ps.lighthouseResult;
+          results.pageSpeed = {
+            performanceScore: Math.round((lhr?.categories?.performance?.score || 0) * 100),
+            metrics: {
+              fcp: lhr?.audits?.["first-contentful-paint"]?.displayValue || "N/A",
+              lcp: lhr?.audits?.["largest-contentful-paint"]?.displayValue || "N/A",
+              tbt: lhr?.audits?.["total-blocking-time"]?.displayValue || "N/A",
+              cls: lhr?.audits?.["cumulative-layout-shift"]?.displayValue || "N/A",
+              si: lhr?.audits?.["speed-index"]?.displayValue || "N/A",
+            },
+          };
+        } catch (e: any) {
+          errors.push(`PageSpeed: ${e.message}`);
+        }
+
+        return {
+          success: true,
+          data: results,
+          errors: errors.length > 0 ? errors : undefined,
+          updatedAt: new Date().toISOString(),
+        };
+      }),
+
     // Google PageSpeed Insights
     getPageSpeed: publicProcedure
       .input(

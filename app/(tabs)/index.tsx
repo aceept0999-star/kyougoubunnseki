@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import {
   ScrollView,
   Text,
@@ -20,6 +20,13 @@ import { getPresetData, formatLargeNumber, type PresetSiteData } from "@/lib/pre
 import { BarChart, PieChart, HorizontalBar, formatNumber } from "@/components/charts";
 import { getApiBaseUrl } from "@/constants/oauth";
 import { exportCsv, exportHtmlReport } from "@/lib/export-utils";
+import {
+  getLiveData,
+  saveLiveData,
+  getAllLiveData,
+  parseApiResponse,
+  type LiveSiteData,
+} from "@/lib/live-data-store";
 
 interface DiscoveredCompetitor {
   domain: string;
@@ -50,11 +57,88 @@ export default function DashboardScreen() {
   const [showExportModal, setShowExportModal] = useState(false);
   const [exporting, setExporting] = useState(false);
 
+  // ライブデータ更新用の状態
+  const [liveDataMap, setLiveDataMap] = useState<Record<string, LiveSiteData>>({});
+  const [updatingDomains, setUpdatingDomains] = useState<Set<string>>(new Set());
+  const [updateProgress, setUpdateProgress] = useState<{ current: number; total: number; domain: string } | null>(null);
+
+  // 起動時にキャッシュされたライブデータを読み込み
+  useEffect(() => {
+    getAllLiveData().then(setLiveDataMap);
+  }, []);
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await refreshSites();
+    const freshLive = await getAllLiveData();
+    setLiveDataMap(freshLive);
     setRefreshing(false);
   }, [refreshSites]);
+
+  // 単一サイトのデータ更新
+  const refreshSingleSite = async (domain: string) => {
+    setUpdatingDomains((prev) => new Set(prev).add(domain));
+    try {
+      const apiUrl = getApiBaseUrl();
+      const res = await fetch(`${apiUrl}/api/trpc/analysis.refreshSiteData`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ json: { domain } }),
+      });
+      const json = await res.json();
+      const result = json?.result?.data?.json;
+      if (result?.success) {
+        const parsed = parseApiResponse(domain, result.data, result.updatedAt);
+        await saveLiveData(parsed);
+        setLiveDataMap((prev) => ({ ...prev, [domain]: parsed }));
+        return parsed;
+      } else {
+        throw new Error("API returned unsuccessful response");
+      }
+    } catch (e: any) {
+      console.error(`Failed to refresh ${domain}:`, e);
+      throw e;
+    } finally {
+      setUpdatingDomains((prev) => {
+        const next = new Set(prev);
+        next.delete(domain);
+        return next;
+      });
+    }
+  };
+
+  // 全サイトのデータを一括更新
+  const refreshAllSites = async () => {
+    if (sites.length === 0) {
+      Alert.alert("サイト未登録", "先にサイトを登録してください");
+      return;
+    }
+    const total = sites.length;
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (let i = 0; i < sites.length; i++) {
+      const site = sites[i];
+      setUpdateProgress({ current: i + 1, total, domain: site.domain });
+      try {
+        await refreshSingleSite(site.domain);
+        successCount++;
+      } catch {
+        errorCount++;
+      }
+    }
+    setUpdateProgress(null);
+
+    if (errorCount === 0) {
+      Alert.alert("更新完了", `${successCount}サイトのデータを更新しました`);
+    } else {
+      Alert.alert(
+        "更新完了",
+        `${successCount}サイト成功、${errorCount}サイト失敗\n一部のAPIでデータが取得できなかった可能性があります`
+      );
+    }
+  };
 
   const discoverCompetitors = async (domain: string, existingSites: { domain: string }[]) => {
     setDiscovering(true);
@@ -97,7 +181,6 @@ export default function DashboardScreen() {
       setNewName("");
       setShowAddModal(false);
 
-      // 自社サイトを追加した場合、競合サイトがなければ自動検出を提案
       if (isOwn) {
         const currentCompetitors = sites.filter((s) => !s.isOwn);
         if (currentCompetitors.length === 0) {
@@ -136,7 +219,6 @@ export default function DashboardScreen() {
     setAddingCompetitors(false);
   };
 
-  // 手動で競合自動検出を実行
   const handleManualDiscover = () => {
     const ownSite = sites.find((s) => s.isOwn);
     if (!ownSite) {
@@ -156,7 +238,7 @@ export default function DashboardScreen() {
   const ownSites = sites.filter((s) => s.isOwn);
   const competitorSites = sites.filter((s) => !s.isOwn);
 
-  // プリセットデータを取得
+  // プリセットデータとライブデータを統合
   const presetMap = useMemo(() => {
     const map: Record<string, PresetSiteData> = {};
     for (const site of sites) {
@@ -166,48 +248,91 @@ export default function DashboardScreen() {
     return map;
   }, [sites]);
 
-  const hasPresetData = Object.keys(presetMap).length > 0;
-
-  // アクセスシェアデータ
-  const accessShareData = useMemo(() => {
-    return sites
-      .map((s) => {
-        const d = presetMap[s.domain];
-        return d ? { label: d.site.name, value: d.accessShare, color: undefined as string | undefined } : null;
-      })
-      .filter(Boolean) as { label: string; value: number; color?: string }[];
-  }, [sites, presetMap]);
-
-  // エンゲージメントサマリーテーブル
-  const engagementRows = useMemo(() => {
-    return sites
-      .map((s) => {
-        const d = presetMap[s.domain];
-        if (!d) return null;
-        return {
-          name: d.site.name,
-          domain: s.domain,
-          sessions: d.engagement.monthlySessions,
-          uniqueVisitors: d.engagement.monthlyUniqueVisitors,
-          duration: d.engagement.avgDuration,
-          pageViews: d.engagement.avgPageViews,
-          bounceRate: d.engagement.bounceRate,
-          totalPageViews: d.engagement.totalPageViews,
-          isOwn: s.isOwn,
-        };
-      })
-      .filter(Boolean) as {
+  // 表示用のデータ: ライブデータがあればそちらを優先
+  const displayData = useMemo(() => {
+    const map: Record<string, {
       name: string;
       domain: string;
+      isOwn: boolean;
       sessions: number;
       uniqueVisitors: number;
       duration: string;
       pageViews: number;
       bounceRate: number;
       totalPageViews: number;
-      isOwn: boolean;
-    }[];
-  }, [sites, presetMap]);
+      accessShare: number;
+      channels: { total: number; direct: number; organicSearch: number; paidSearch: number; referral: number; displayAds: number; social: number; email: number } | null;
+      updatedAt: string | null;
+      isLive: boolean;
+    }> = {};
+
+    for (const site of sites) {
+      const live = liveDataMap[site.domain];
+      const preset = presetMap[site.domain];
+
+      if (live?.engagement) {
+        map[site.domain] = {
+          name: site.name,
+          domain: site.domain,
+          isOwn: site.isOwn,
+          sessions: live.engagement.monthlySessions,
+          uniqueVisitors: live.engagement.monthlyUniqueVisitors,
+          duration: live.engagement.avgDuration,
+          pageViews: live.engagement.avgPageViews,
+          bounceRate: live.engagement.bounceRate,
+          totalPageViews: live.engagement.totalPageViews,
+          accessShare: 0,
+          channels: live.channels,
+          updatedAt: live.updatedAt,
+          isLive: true,
+        };
+      } else if (preset) {
+        map[site.domain] = {
+          name: preset.site.name,
+          domain: site.domain,
+          isOwn: site.isOwn,
+          sessions: preset.engagement.monthlySessions,
+          uniqueVisitors: preset.engagement.monthlyUniqueVisitors,
+          duration: preset.engagement.avgDuration,
+          pageViews: preset.engagement.avgPageViews,
+          bounceRate: preset.engagement.bounceRate,
+          totalPageViews: preset.engagement.totalPageViews,
+          accessShare: preset.accessShare,
+          channels: preset.channels,
+          updatedAt: null,
+          isLive: false,
+        };
+      }
+    }
+
+    // ライブデータのアクセスシェアを計算
+    const totalSessions = Object.values(map).reduce((sum, d) => sum + d.sessions, 0);
+    if (totalSessions > 0) {
+      for (const d of Object.values(map)) {
+        if (d.isLive) {
+          d.accessShare = Math.round((d.sessions / totalSessions) * 10000) / 100;
+        }
+      }
+    }
+
+    return map;
+  }, [sites, presetMap, liveDataMap]);
+
+  const hasDisplayData = Object.keys(displayData).length > 0;
+
+  // アクセスシェアデータ
+  const accessShareData = useMemo(() => {
+    return Object.values(displayData)
+      .filter((d) => d.accessShare > 0)
+      .map((d) => ({ label: d.name, value: d.accessShare }));
+  }, [displayData]);
+
+  // エンゲージメントサマリー
+  const engagementRows = useMemo(() => {
+    return Object.values(displayData);
+  }, [displayData]);
+
+  const isAnyUpdating = updatingDomains.size > 0;
 
   return (
     <ScreenContainer>
@@ -224,7 +349,7 @@ export default function DashboardScreen() {
         </View>
 
         {/* Header Actions */}
-        <View className="flex-row px-5 mt-2 gap-2">
+        <View className="flex-row px-5 mt-2 gap-2 flex-wrap">
           <TouchableOpacity
             className="flex-row items-center bg-primary/10 border border-primary/30 rounded-lg px-3 py-2"
             onPress={() => setShowExportModal(true)}
@@ -233,7 +358,46 @@ export default function DashboardScreen() {
             <IconSymbol name="square.and.arrow.up" size={16} color={colors.primary} />
             <Text className="text-xs font-medium text-primary ml-1.5">レポート出力</Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            className="flex-row items-center bg-success/10 border border-success/30 rounded-lg px-3 py-2"
+            onPress={refreshAllSites}
+            disabled={isAnyUpdating}
+            activeOpacity={0.7}
+          >
+            {isAnyUpdating ? (
+              <ActivityIndicator size={14} color={colors.success} />
+            ) : (
+              <IconSymbol name="arrow.clockwise" size={16} color={colors.success} />
+            )}
+            <Text className="text-xs font-medium text-success ml-1.5">
+              {isAnyUpdating ? "更新中..." : "全サイト更新"}
+            </Text>
+          </TouchableOpacity>
         </View>
+
+        {/* Update Progress Banner */}
+        {updateProgress && (
+          <View className="mx-5 mt-3 bg-primary/5 border border-primary/20 rounded-xl p-4">
+            <View className="flex-row items-center justify-between mb-2">
+              <Text className="text-sm font-semibold text-primary">データ更新中</Text>
+              <Text className="text-xs text-primary">{updateProgress.current}/{updateProgress.total}</Text>
+            </View>
+            <Text className="text-xs text-muted mb-2" numberOfLines={1}>
+              {updateProgress.domain} を取得中...
+            </Text>
+            {/* Progress Bar */}
+            <View className="h-2 bg-border rounded-full overflow-hidden">
+              <View
+                style={{
+                  height: "100%",
+                  width: `${(updateProgress.current / updateProgress.total) * 100}%`,
+                  backgroundColor: colors.primary,
+                  borderRadius: 4,
+                }}
+              />
+            </View>
+          </View>
+        )}
 
         {/* Quick Stats */}
         <View className="flex-row px-5 mt-4 gap-3">
@@ -275,20 +439,22 @@ export default function DashboardScreen() {
         {accessShareData.length > 0 && (
           <View className="mx-5 mt-5 bg-surface rounded-xl p-4 border border-border">
             <Text className="text-base font-semibold text-foreground mb-4">アクセスシェア率</Text>
-            <PieChart
-              data={accessShareData.map((d) => ({
-                label: d.label,
-                value: d.value,
-              }))}
-              size={200}
-            />
+            <PieChart data={accessShareData} size={200} />
           </View>
         )}
 
         {/* Engagement Summary Table */}
         {engagementRows.length > 0 && (
           <View className="mx-5 mt-5 bg-surface rounded-xl p-4 border border-border">
-            <Text className="text-base font-semibold text-foreground mb-4">エンゲージメント サマリー</Text>
+            <View className="flex-row items-center justify-between mb-4">
+              <Text className="text-base font-semibold text-foreground">エンゲージメント サマリー</Text>
+              {Object.values(displayData).some((d) => d.isLive) && (
+                <View className="flex-row items-center gap-1 bg-success/10 px-2 py-0.5 rounded-full">
+                  <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.success }} />
+                  <Text className="text-[10px] text-success font-medium">LIVE</Text>
+                </View>
+              )}
+            </View>
             <View className="flex-row border-b border-border pb-2 mb-1">
               <Text className="flex-1 text-[10px] font-medium text-muted">サイト</Text>
               <Text className="w-16 text-[10px] font-medium text-muted text-right">セッション</Text>
@@ -317,6 +483,9 @@ export default function DashboardScreen() {
                   <Text className="text-xs text-foreground" numberOfLines={1}>
                     {row.name}
                   </Text>
+                  {row.isLive && (
+                    <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: colors.success, marginLeft: 2 }} />
+                  )}
                 </View>
                 <Text className="w-16 text-xs text-foreground text-right">
                   {formatLargeNumber(row.sessions)}
@@ -332,28 +501,25 @@ export default function DashboardScreen() {
         )}
 
         {/* Monthly Traffic Comparison */}
-        {hasPresetData && (
+        {hasDisplayData && (
           <View className="mx-5 mt-5 bg-surface rounded-xl p-4 border border-border">
             <Text className="text-base font-semibold text-foreground mb-4">月間トラフィック比較</Text>
             <BarChart
-              data={sites
-                .map((s) => {
-                  const d = presetMap[s.domain];
-                  return d ? { label: d.site.name, value: d.engagement.monthlySessions } : null;
-                })
-                .filter(Boolean) as { label: string; value: number }[]}
+              data={Object.values(displayData).map((d) => ({
+                label: d.name,
+                value: d.sessions,
+              }))}
               height={180}
             />
           </View>
         )}
 
         {/* Channel Traffic Overview */}
-        {hasPresetData && (
+        {hasDisplayData && (
           <View className="mx-5 mt-5 bg-surface rounded-xl p-4 border border-border">
             <Text className="text-base font-semibold text-foreground mb-4">チャネル別トラフィック概要</Text>
-            {sites.map((s) => {
-              const d = presetMap[s.domain];
-              if (!d) return null;
+            {Object.values(displayData).map((d) => {
+              if (!d.channels) return null;
               const channels = [
                 { label: "オーガニック検索", value: d.channels.organicSearch, color: "#10B981" },
                 { label: "ダイレクト", value: d.channels.direct, color: "#1E40AF" },
@@ -362,19 +528,25 @@ export default function DashboardScreen() {
                 { label: "ソーシャル", value: d.channels.social, color: "#EC4899" },
                 { label: "ディスプレイ", value: d.channels.displayAds, color: "#06B6D4" },
               ].filter((c) => c.value > 0);
+              if (channels.length === 0) return null;
               return (
-                <View key={s.id} className="mb-5">
+                <View key={d.domain} className="mb-5">
                   <View className="flex-row items-center gap-2 mb-2">
                     <View
                       style={{
                         width: 6,
                         height: 6,
                         borderRadius: 3,
-                        backgroundColor: s.isOwn ? colors.primary : colors.warning,
+                        backgroundColor: d.isOwn ? colors.primary : colors.warning,
                       }}
                     />
-                    <Text className="text-sm font-medium text-foreground">{d.site.name}</Text>
+                    <Text className="text-sm font-medium text-foreground">{d.name}</Text>
                     <Text className="text-xs text-muted">({formatLargeNumber(d.channels.total)} total)</Text>
+                    {d.isLive && (
+                      <View className="flex-row items-center gap-0.5 bg-success/10 px-1.5 py-0.5 rounded-full">
+                        <Text className="text-[8px] text-success font-medium">LIVE</Text>
+                      </View>
+                    )}
                   </View>
                   <HorizontalBar data={channels} />
                 </View>
@@ -392,10 +564,13 @@ export default function DashboardScreen() {
                 key={site.id}
                 site={site}
                 presetData={presetMap[site.domain]}
+                liveData={liveDataMap[site.domain]}
+                isUpdating={updatingDomains.has(site.domain)}
                 onPress={() =>
                   router.push({ pathname: "/site-detail", params: { domain: site.domain, name: site.name } })
                 }
                 onRemove={() => handleRemoveSite(site.id, site.name)}
+                onRefresh={() => refreshSingleSite(site.domain).catch(() => Alert.alert("エラー", "データの更新に失敗しました"))}
                 colors={colors}
               />
             ))}
@@ -410,10 +585,13 @@ export default function DashboardScreen() {
                 key={site.id}
                 site={site}
                 presetData={presetMap[site.domain]}
+                liveData={liveDataMap[site.domain]}
+                isUpdating={updatingDomains.has(site.domain)}
                 onPress={() =>
                   router.push({ pathname: "/site-detail", params: { domain: site.domain, name: site.name } })
                 }
                 onRemove={() => handleRemoveSite(site.id, site.name)}
+                onRefresh={() => refreshSingleSite(site.domain).catch(() => Alert.alert("エラー", "データの更新に失敗しました"))}
                 colors={colors}
               />
             ))}
@@ -797,16 +975,26 @@ export default function DashboardScreen() {
 function SiteCard({
   site,
   presetData,
+  liveData,
+  isUpdating,
   onPress,
   onRemove,
+  onRefresh,
   colors,
 }: {
   site: { id: string; domain: string; name: string; isOwn: boolean };
   presetData?: PresetSiteData;
+  liveData?: LiveSiteData;
+  isUpdating: boolean;
   onPress: () => void;
   onRemove: () => void;
+  onRefresh: () => void;
   colors: ReturnType<typeof useColors>;
 }) {
+  const data = liveData?.engagement || presetData?.engagement;
+  const isLive = !!liveData?.engagement;
+  const accessShare = presetData?.accessShare;
+
   return (
     <TouchableOpacity
       className="bg-surface rounded-xl p-4 mb-3 border border-border"
@@ -825,42 +1013,64 @@ function SiteCard({
               }}
             />
             <Text className="text-base font-semibold text-foreground">{site.name}</Text>
+            {isLive && (
+              <View className="flex-row items-center gap-0.5 bg-success/10 px-1.5 py-0.5 rounded-full">
+                <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: colors.success }} />
+                <Text className="text-[8px] text-success font-medium">LIVE</Text>
+              </View>
+            )}
           </View>
-          <Text className="text-xs text-muted mt-1">{site.domain}</Text>
+          <View className="flex-row items-center gap-2 mt-1">
+            <Text className="text-xs text-muted">{site.domain}</Text>
+            {liveData?.updatedAt && (
+              <Text className="text-[10px] text-muted">
+                更新: {new Date(liveData.updatedAt).toLocaleDateString("ja-JP")}
+              </Text>
+            )}
+          </View>
         </View>
-        <View className="flex-row items-center gap-2">
+        <View className="flex-row items-center gap-1">
+          <TouchableOpacity onPress={onRefresh} disabled={isUpdating} style={{ padding: 8 }}>
+            {isUpdating ? (
+              <ActivityIndicator size={16} color={colors.primary} />
+            ) : (
+              <IconSymbol name="arrow.clockwise" size={16} color={colors.primary} />
+            )}
+          </TouchableOpacity>
           <TouchableOpacity onPress={onRemove} style={{ padding: 8 }}>
             <IconSymbol name="trash.fill" size={18} color={colors.error} />
           </TouchableOpacity>
           <IconSymbol name="chevron.right" size={16} color={colors.muted} />
         </View>
       </View>
-      {presetData && (
+      {data && (
         <View className="flex-row mt-3 gap-4">
           <View>
             <Text className="text-[10px] text-muted">月間セッション</Text>
             <Text className="text-sm font-semibold text-foreground">
-              {formatLargeNumber(presetData.engagement.monthlySessions)}
+              {formatLargeNumber(data.monthlySessions)}
             </Text>
           </View>
           <View>
             <Text className="text-[10px] text-muted">直帰率</Text>
             <Text className="text-sm font-semibold text-foreground">
-              {(presetData.engagement.bounceRate * 100).toFixed(1)}%
+              {(data.bounceRate * 100).toFixed(1)}%
             </Text>
           </View>
           <View>
             <Text className="text-[10px] text-muted">平均PV</Text>
             <Text className="text-sm font-semibold text-foreground">
-              {presetData.engagement.avgPageViews.toFixed(1)}
+              {data.avgPageViews.toFixed(1)}
             </Text>
           </View>
-          <View>
-            <Text className="text-[10px] text-muted">シェア</Text>
-            <Text className="text-sm font-semibold text-foreground">
-              {presetData.accessShare}%
-            </Text>
-          </View>
+          {accessShare != null && !isLive && (
+            <View>
+              <Text className="text-[10px] text-muted">シェア</Text>
+              <Text className="text-sm font-semibold text-foreground">
+                {accessShare}%
+              </Text>
+            </View>
+          )}
         </View>
       )}
     </TouchableOpacity>

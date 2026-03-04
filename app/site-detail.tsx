@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   ScrollView,
   Text,
@@ -6,7 +6,6 @@ import {
   ActivityIndicator,
   TouchableOpacity,
   StyleSheet,
-  FlatList,
   Alert,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -17,6 +16,13 @@ import { trpc } from "@/lib/trpc";
 import { BarChart, LineChart, PieChart, HorizontalBar, formatNumber } from "@/components/charts";
 import { getPresetData, formatLargeNumber, type PresetSiteData } from "@/lib/preset-data";
 import { exportCsv, exportHtmlReport } from "@/lib/export-utils";
+import {
+  getLiveData,
+  saveLiveData,
+  parseApiResponse,
+  type LiveSiteData,
+} from "@/lib/live-data-store";
+import { getApiBaseUrl } from "@/constants/oauth";
 
 type TabId = "overview" | "channels" | "keywords" | "speed";
 
@@ -27,11 +33,49 @@ export default function SiteDetailScreen() {
   const domain = params.domain || "";
   const siteName = params.name || domain;
   const [activeTab, setActiveTab] = useState<TabId>("overview");
+  const [liveData, setLiveData] = useState<LiveSiteData | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // プリセットデータ
   const preset = getPresetData(domain);
 
-  // API queries (only when no preset data or for live data)
+  // 起動時にキャッシュされたライブデータを読み込み
+  useEffect(() => {
+    getLiveData(domain).then((data) => {
+      if (data) setLiveData(data);
+    });
+  }, [domain]);
+
+  // ライブデータ更新
+  const handleRefreshData = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      const apiUrl = getApiBaseUrl();
+      const res = await fetch(`${apiUrl}/api/trpc/analysis.refreshSiteData`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ json: { domain } }),
+      });
+      const json = await res.json();
+      const result = json?.result?.data?.json;
+      if (result?.success) {
+        const parsed = parseApiResponse(domain, result.data, result.updatedAt);
+        await saveLiveData(parsed);
+        setLiveData(parsed);
+        Alert.alert("更新完了", `${siteName}のデータを最新に更新しました`);
+      } else {
+        Alert.alert("更新失敗", "APIからデータを取得できませんでした。一部のAPIが利用できない可能性があります。");
+      }
+    } catch (e) {
+      console.error("Refresh error:", e);
+      Alert.alert("エラー", "データの更新に失敗しました");
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [domain, siteName]);
+
+  // API queries
   const pageSpeed = trpc.analysis.getPageSpeed.useQuery(
     { url: `https://${domain}`, strategy: "mobile" },
     { enabled: !!domain && activeTab === "speed" }
@@ -46,6 +90,8 @@ export default function SiteDetailScreen() {
     { id: "speed", label: "速度" },
   ];
 
+  const isLive = !!liveData?.engagement;
+
   return (
     <ScreenContainer edges={["top", "left", "right"]}>
       {/* Header */}
@@ -54,11 +100,37 @@ export default function SiteDetailScreen() {
           <IconSymbol name="chevron.right" size={24} color={colors.foreground} style={{ transform: [{ scaleX: -1 }] }} />
         </TouchableOpacity>
         <View className="flex-1 ml-3">
-          <Text className="text-lg font-bold text-foreground" numberOfLines={1}>
-            {siteName}
-          </Text>
-          <Text className="text-xs text-muted">{domain}</Text>
+          <View className="flex-row items-center gap-2">
+            <Text className="text-lg font-bold text-foreground" numberOfLines={1}>
+              {siteName}
+            </Text>
+            {isLive && (
+              <View className="flex-row items-center gap-0.5 bg-success/10 px-1.5 py-0.5 rounded-full">
+                <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: colors.success }} />
+                <Text className="text-[8px] text-success font-medium">LIVE</Text>
+              </View>
+            )}
+          </View>
+          <View className="flex-row items-center gap-2">
+            <Text className="text-xs text-muted">{domain}</Text>
+            {liveData?.updatedAt && (
+              <Text className="text-[10px] text-muted">
+                更新: {new Date(liveData.updatedAt).toLocaleDateString("ja-JP")}
+              </Text>
+            )}
+          </View>
         </View>
+        <TouchableOpacity
+          onPress={handleRefreshData}
+          disabled={isRefreshing}
+          style={{ padding: 8 }}
+        >
+          {isRefreshing ? (
+            <ActivityIndicator size={20} color={colors.primary} />
+          ) : (
+            <IconSymbol name="arrow.clockwise" size={20} color={colors.primary} />
+          )}
+        </TouchableOpacity>
         <TouchableOpacity
           onPress={async () => {
             try {
@@ -74,6 +146,14 @@ export default function SiteDetailScreen() {
           <IconSymbol name="square.and.arrow.up" size={22} color={colors.primary} />
         </TouchableOpacity>
       </View>
+
+      {/* Refresh Banner */}
+      {isRefreshing && (
+        <View className="bg-primary/5 border-b border-primary/20 px-5 py-3 flex-row items-center">
+          <ActivityIndicator size={14} color={colors.primary} />
+          <Text className="text-xs text-primary ml-2">DataForSEO APIからデータを取得中...</Text>
+        </View>
+      )}
 
       {/* Tab Bar */}
       <View className="flex-row px-5 pt-3 pb-1 border-b border-border">
@@ -97,9 +177,9 @@ export default function SiteDetailScreen() {
       </View>
 
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-        {activeTab === "overview" && <OverviewTab preset={preset} colors={colors} />}
-        {activeTab === "channels" && <ChannelsTab preset={preset} colors={colors} />}
-        {activeTab === "keywords" && <KeywordsTab preset={preset} colors={colors} />}
+        {activeTab === "overview" && <OverviewTab preset={preset} liveData={liveData} colors={colors} />}
+        {activeTab === "channels" && <ChannelsTab preset={preset} liveData={liveData} colors={colors} />}
+        {activeTab === "keywords" && <KeywordsTab preset={preset} liveData={liveData} colors={colors} />}
         {activeTab === "speed" && (
           <SpeedTab
             pageSpeedData={pageSpeedData}
@@ -114,22 +194,33 @@ export default function SiteDetailScreen() {
 }
 
 // ===== Overview Tab =====
-function OverviewTab({ preset, colors }: { preset: PresetSiteData | null; colors: ReturnType<typeof useColors> }) {
-  if (!preset) {
+function OverviewTab({ preset, liveData, colors }: { preset: PresetSiteData | null; liveData: LiveSiteData | null; colors: ReturnType<typeof useColors> }) {
+  const eng = liveData?.engagement || preset?.engagement;
+  const isLive = !!liveData?.engagement;
+
+  if (!eng) {
     return (
       <View className="items-center mt-12 px-8">
         <IconSymbol name="chart.bar.fill" size={40} color={colors.muted} />
         <Text className="text-sm text-muted text-center mt-3">
-          このサイトのプリセットデータはありません。{"\n"}APIからデータを取得するには「速度」タブをご利用ください。
+          このサイトのデータはまだありません。{"\n"}ヘッダーの更新ボタンをタップしてデータを取得してください。
         </Text>
       </View>
     );
   }
 
-  const eng = preset.engagement;
-
   return (
     <>
+      {/* Data Source Badge */}
+      {isLive && (
+        <View className="mx-5 mt-3 flex-row items-center gap-1 bg-success/10 px-3 py-1.5 rounded-lg self-start">
+          <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.success }} />
+          <Text className="text-[10px] text-success font-medium">
+            ライブデータ（{liveData?.updatedAt ? new Date(liveData.updatedAt).toLocaleDateString("ja-JP") : ""}）
+          </Text>
+        </View>
+      )}
+
       {/* Engagement Metrics */}
       <View className="flex-row flex-wrap px-5 mt-4 gap-3">
         <MetricCard label="月間セッション数" value={formatLargeNumber(eng.monthlySessions)} colors={colors} />
@@ -143,8 +234,10 @@ function OverviewTab({ preset, colors }: { preset: PresetSiteData | null; colors
           valueColor={eng.bounceRate > 0.7 ? colors.error : eng.bounceRate > 0.5 ? colors.warning : colors.success}
         />
         <MetricCard label="総ページビュー" value={formatLargeNumber(eng.totalPageViews)} colors={colors} />
-        <MetricCard label="訪問/ユニーク比" value={eng.visitsPerUniqueVisitor.toFixed(2)} colors={colors} />
-        <MetricCard label="アクセスシェア" value={`${preset.accessShare}%`} colors={colors} />
+        {eng.visitsPerUniqueVisitor != null && (
+          <MetricCard label="訪問/ユニーク比" value={eng.visitsPerUniqueVisitor.toFixed(2)} colors={colors} />
+        )}
+        {preset && <MetricCard label="アクセスシェア" value={`${preset.accessShare}%`} colors={colors} />}
       </View>
 
       {/* Detailed Engagement Table */}
@@ -152,38 +245,48 @@ function OverviewTab({ preset, colors }: { preset: PresetSiteData | null; colors
         <Text className="text-base font-semibold text-foreground mb-4">エンゲージメント詳細</Text>
         <DetailRow label="月間セッション数" value={eng.monthlySessions.toLocaleString()} colors={colors} />
         <DetailRow label="月間ユニーク訪問者数" value={eng.monthlyUniqueVisitors.toLocaleString()} colors={colors} />
-        <DetailRow label="訪問数/ユニーク訪問者数" value={eng.visitsPerUniqueVisitor.toFixed(2)} colors={colors} />
-        <DetailRow label="重複排除オーディエンス" value={eng.deduplicatedAudience.toLocaleString()} colors={colors} />
+        {eng.visitsPerUniqueVisitor != null && (
+          <DetailRow label="訪問数/ユニーク訪問者数" value={eng.visitsPerUniqueVisitor.toFixed(2)} colors={colors} />
+        )}
+        {eng.deduplicatedAudience != null && (
+          <DetailRow label="重複排除オーディエンス" value={eng.deduplicatedAudience.toLocaleString()} colors={colors} />
+        )}
         <DetailRow label="平均滞在時間" value={eng.avgDuration} colors={colors} />
         <DetailRow label="平均ページビュー数" value={eng.avgPageViews.toFixed(2)} colors={colors} />
         <DetailRow label="直帰率" value={`${(eng.bounceRate * 100).toFixed(2)}%`} colors={colors} />
         <DetailRow label="ページビュー数" value={eng.totalPageViews.toLocaleString()} colors={colors} last />
       </View>
 
-      {/* Search Traffic */}
-      <View className="mx-5 mt-5 bg-surface rounded-xl p-4 border border-border">
-        <Text className="text-base font-semibold text-foreground mb-4">検索トラフィック</Text>
-        <DetailRow label="検索トラフィック合計" value={formatLargeNumber(preset.searchTraffic.total)} colors={colors} />
-        <DetailRow label="オーガニック検索" value={`${preset.searchTraffic.organicPercent}%`} colors={colors} />
-        <DetailRow label="有料検索" value={`${preset.searchTraffic.paidPercent}%`} colors={colors} />
-        <DetailRow label="ディスプレイ広告訪問" value={preset.displayAds.toLocaleString()} colors={colors} />
-        <DetailRow label="ソーシャルトラフィック" value={preset.socialTraffic.toLocaleString()} colors={colors} last />
-      </View>
+      {/* Search Traffic (preset only) */}
+      {preset && (
+        <View className="mx-5 mt-5 bg-surface rounded-xl p-4 border border-border">
+          <Text className="text-base font-semibold text-foreground mb-4">検索トラフィック</Text>
+          <DetailRow label="検索トラフィック合計" value={formatLargeNumber(preset.searchTraffic.total)} colors={colors} />
+          <DetailRow label="オーガニック検索" value={`${preset.searchTraffic.organicPercent}%`} colors={colors} />
+          <DetailRow label="有料検索" value={`${preset.searchTraffic.paidPercent}%`} colors={colors} />
+          <DetailRow label="ディスプレイ広告訪問" value={preset.displayAds.toLocaleString()} colors={colors} />
+          <DetailRow label="ソーシャルトラフィック" value={preset.socialTraffic.toLocaleString()} colors={colors} last />
+        </View>
+      )}
     </>
   );
 }
 
 // ===== Channels Tab =====
-function ChannelsTab({ preset, colors }: { preset: PresetSiteData | null; colors: ReturnType<typeof useColors> }) {
-  if (!preset) {
+function ChannelsTab({ preset, liveData, colors }: { preset: PresetSiteData | null; liveData: LiveSiteData | null; colors: ReturnType<typeof useColors> }) {
+  const ch = liveData?.channels || preset?.channels;
+  const isLive = !!liveData?.channels;
+
+  if (!ch) {
     return (
       <View className="items-center mt-12 px-8">
-        <Text className="text-sm text-muted text-center">プリセットデータがありません</Text>
+        <Text className="text-sm text-muted text-center">
+          チャネルデータがありません。{"\n"}ヘッダーの更新ボタンをタップしてデータを取得してください。
+        </Text>
       </View>
     );
   }
 
-  const ch = preset.channels;
   const channelData = [
     { label: "オーガニック検索", value: ch.organicSearch, color: "#10B981" },
     { label: "ダイレクト", value: ch.direct, color: "#1E40AF" },
@@ -196,11 +299,19 @@ function ChannelsTab({ preset, colors }: { preset: PresetSiteData | null; colors
 
   return (
     <>
+      {/* Data Source Badge */}
+      {isLive && (
+        <View className="mx-5 mt-3 flex-row items-center gap-1 bg-success/10 px-3 py-1.5 rounded-lg self-start">
+          <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.success }} />
+          <Text className="text-[10px] text-success font-medium">ライブデータ</Text>
+        </View>
+      )}
+
       {/* Total Traffic */}
       <View className="mx-5 mt-4 bg-surface rounded-xl p-4 border border-border">
         <Text className="text-base font-semibold text-foreground mb-2">総トラフィック</Text>
         <Text className="text-3xl font-bold text-primary">{formatLargeNumber(ch.total)}</Text>
-        <Text className="text-xs text-muted mt-1">年間累計（Feb 2024 - Jan 2025）</Text>
+        <Text className="text-xs text-muted mt-1">{isLive ? "最新データ" : "年間累計（Feb 2024 - Jan 2025）"}</Text>
       </View>
 
       {/* Channel Breakdown Bar */}
@@ -234,21 +345,59 @@ function ChannelsTab({ preset, colors }: { preset: PresetSiteData | null; colors
 }
 
 // ===== Keywords Tab =====
-function KeywordsTab({ preset, colors }: { preset: PresetSiteData | null; colors: ReturnType<typeof useColors> }) {
-  if (!preset) {
+type UnifiedKeyword = {
+  rank: number;
+  keyword: string;
+  clicks: number;
+  sharePercent: number;
+  searchVolume: number | string;
+};
+
+function normalizeKeywords(liveData: LiveSiteData | null, preset: PresetSiteData | null): { keywords: UnifiedKeyword[]; isLive: boolean; totalKeywords: number } {
+  if (liveData?.keywords && liveData.keywords.length > 0) {
+    const total = liveData.keywords.reduce((s, k) => s + k.traffic, 0);
+    const unified: UnifiedKeyword[] = liveData.keywords.map((k, i) => ({
+      rank: i + 1,
+      keyword: k.keyword,
+      clicks: k.traffic,
+      sharePercent: total > 0 ? Math.round((k.traffic / total) * 10000) / 100 : 0,
+      searchVolume: k.searchVolume,
+    }));
+    return { keywords: unified, isLive: true, totalKeywords: unified.length };
+  }
+  if (preset?.keywords) {
+    return { keywords: preset.keywords, isLive: false, totalKeywords: preset.totalKeywords };
+  }
+  return { keywords: [], isLive: false, totalKeywords: 0 };
+}
+
+function KeywordsTab({ preset, liveData, colors }: { preset: PresetSiteData | null; liveData: LiveSiteData | null; colors: ReturnType<typeof useColors> }) {
+  const { keywords, isLive, totalKeywords } = normalizeKeywords(liveData, preset);
+
+  if (keywords.length === 0) {
     return (
       <View className="items-center mt-12 px-8">
-        <Text className="text-sm text-muted text-center">プリセットデータがありません</Text>
+        <Text className="text-sm text-muted text-center">
+          キーワードデータがありません。{"\n"}ヘッダーの更新ボタンをタップしてデータを取得してください。
+        </Text>
       </View>
     );
   }
 
   return (
     <>
+      {/* Data Source Badge */}
+      {isLive && (
+        <View className="mx-5 mt-3 flex-row items-center gap-1 bg-success/10 px-3 py-1.5 rounded-lg self-start">
+          <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.success }} />
+          <Text className="text-[10px] text-success font-medium">ライブデータ</Text>
+        </View>
+      )}
+
       {/* Summary */}
       <View className="mx-5 mt-4 bg-surface rounded-xl p-4 border border-border">
         <Text className="text-base font-semibold text-foreground mb-2">流入キーワード</Text>
-        <Text className="text-3xl font-bold text-primary">{preset.totalKeywords.toLocaleString()}</Text>
+        <Text className="text-3xl font-bold text-primary">{totalKeywords.toLocaleString()}</Text>
         <Text className="text-xs text-muted mt-1">キーワード総数</Text>
       </View>
 
@@ -256,7 +405,7 @@ function KeywordsTab({ preset, colors }: { preset: PresetSiteData | null; colors
       <View className="mx-5 mt-5 bg-surface rounded-xl p-4 border border-border">
         <Text className="text-base font-semibold text-foreground mb-4">Top10 キーワード（クリック数）</Text>
         <BarChart
-          data={preset.keywords.slice(0, 10).map((kw) => ({
+          data={keywords.slice(0, 10).map((kw) => ({
             label: kw.keyword.length > 8 ? kw.keyword.slice(0, 8) + "…" : kw.keyword,
             value: kw.clicks,
           }))}
@@ -275,7 +424,7 @@ function KeywordsTab({ preset, colors }: { preset: PresetSiteData | null; colors
           <Text className="w-12 text-[10px] font-medium text-muted text-right">シェア</Text>
           <Text className="w-14 text-[10px] font-medium text-muted text-right">検索回数</Text>
         </View>
-        {preset.keywords.map((kw, i) => (
+        {keywords.map((kw, i) => (
           <View key={i} className="flex-row py-2 border-b border-border items-center">
             <Text className="w-6 text-xs text-muted">{kw.rank}</Text>
             <Text className="flex-1 text-xs text-foreground" numberOfLines={1}>
