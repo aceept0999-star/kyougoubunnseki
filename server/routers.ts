@@ -277,10 +277,22 @@ export const appRouter = router({
                 location_code: input.locationCode,
                 language_code: input.languageCode,
                 limit: input.limit,
+                exclude_top_domains: true,
               },
             ]
           );
-          return { success: true, data: result };
+          // Parse response into clean competitor list
+          const tasks = result?.tasks || [];
+          const items = tasks[0]?.result?.[0]?.items || [];
+          const competitors = items.map((item: any) => ({
+            domain: item.domain || "",
+            avgPosition: item.avg_position || 0,
+            intersections: item.intersections || 0,
+            organicTraffic: item.full_domain_metrics?.organic?.etv || 0,
+            organicKeywords: item.full_domain_metrics?.organic?.count || 0,
+            paidTraffic: item.full_domain_metrics?.paid?.etv || 0,
+          }));
+          return { success: true, data: { competitors } };
         } catch (error: unknown) {
           const message = error instanceof Error ? error.message : "Unknown error";
           return { success: false, error: message, data: null };

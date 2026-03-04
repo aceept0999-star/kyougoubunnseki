@@ -18,6 +18,17 @@ import { useColors } from "@/hooks/use-colors";
 import { useSites } from "@/lib/sites-context";
 import { getPresetData, formatLargeNumber, type PresetSiteData } from "@/lib/preset-data";
 import { BarChart, PieChart, HorizontalBar, formatNumber } from "@/components/charts";
+import { getApiBaseUrl } from "@/constants/oauth";
+
+interface DiscoveredCompetitor {
+  domain: string;
+  avgPosition: number;
+  intersections: number;
+  organicTraffic: number;
+  organicKeywords: number;
+  paidTraffic: number;
+  selected: boolean;
+}
 
 export default function DashboardScreen() {
   const colors = useColors();
@@ -30,11 +41,44 @@ export default function DashboardScreen() {
   const [adding, setAdding] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
+  // 競合自動検出用の状態
+  const [showCompetitorModal, setShowCompetitorModal] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
+  const [discoveredCompetitors, setDiscoveredCompetitors] = useState<DiscoveredCompetitor[]>([]);
+  const [addingCompetitors, setAddingCompetitors] = useState(false);
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await refreshSites();
     setRefreshing(false);
   }, [refreshSites]);
+
+  const discoverCompetitors = async (domain: string, existingSites: { domain: string }[]) => {
+    setDiscovering(true);
+    setShowCompetitorModal(true);
+    setDiscoveredCompetitors([]);
+    try {
+      const apiUrl = getApiBaseUrl();
+      const inputParam = encodeURIComponent(JSON.stringify({ json: { domain, limit: 10 } }));
+      const res = await fetch(`${apiUrl}/api/trpc/analysis.getCompetitors?input=${inputParam}`, {
+        credentials: "include",
+      });
+      const json = await res.json();
+      const result = json?.result?.data?.json;
+      if (result?.success && result.data?.competitors) {
+        const existingDomains = new Set(existingSites.map((s) => s.domain));
+        existingDomains.add(domain);
+        const filtered = result.data.competitors
+          .filter((c: any) => c.domain && !existingDomains.has(c.domain))
+          .slice(0, 5)
+          .map((c: any) => ({ ...c, selected: true }));
+        setDiscoveredCompetitors(filtered);
+      }
+    } catch (e) {
+      console.error("Competitor discovery error:", e);
+    }
+    setDiscovering(false);
+  };
 
   const handleAddSite = async () => {
     if (!newDomain.trim()) {
@@ -44,16 +88,59 @@ export default function DashboardScreen() {
     setAdding(true);
     try {
       let domain = newDomain.trim().toLowerCase();
-      domain = domain.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+      domain = domain.replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "");
       await addSite({ domain, name: newName.trim() || domain, isOwn });
       setNewDomain("");
       setNewName("");
-      setIsOwn(false);
       setShowAddModal(false);
+
+      // 自社サイトを追加した場合、競合サイトがなければ自動検出を提案
+      if (isOwn) {
+        const currentCompetitors = sites.filter((s) => !s.isOwn);
+        if (currentCompetitors.length === 0) {
+          discoverCompetitors(domain, sites);
+        }
+      }
+      setIsOwn(false);
     } catch (e) {
       Alert.alert("エラー", "サイトの追加に失敗しました");
     }
     setAdding(false);
+  };
+
+  const toggleCompetitorSelection = (index: number) => {
+    setDiscoveredCompetitors((prev) =>
+      prev.map((c, i) => (i === index ? { ...c, selected: !c.selected } : c))
+    );
+  };
+
+  const handleAddDiscoveredCompetitors = async () => {
+    const selected = discoveredCompetitors.filter((c) => c.selected);
+    if (selected.length === 0) {
+      Alert.alert("選択してください", "少なくとも1つの競合サイトを選択してください");
+      return;
+    }
+    setAddingCompetitors(true);
+    try {
+      for (const comp of selected) {
+        await addSite({ domain: comp.domain, name: comp.domain, isOwn: false });
+      }
+      setShowCompetitorModal(false);
+      setDiscoveredCompetitors([]);
+    } catch (e) {
+      Alert.alert("エラー", "競合サイトの追加に失敗しました");
+    }
+    setAddingCompetitors(false);
+  };
+
+  // 手動で競合自動検出を実行
+  const handleManualDiscover = () => {
+    const ownSite = sites.find((s) => s.isOwn);
+    if (!ownSite) {
+      Alert.alert("自社サイト未登録", "先に自社サイトを登録してください");
+      return;
+    }
+    discoverCompetitors(ownSite.domain, sites);
   };
 
   const handleRemoveSite = (id: string, name: string) => {
@@ -149,12 +236,32 @@ export default function DashboardScreen() {
           </View>
         </View>
 
+        {/* Auto-discover button */}
+        {ownSites.length > 0 && (
+          <View className="px-5 mt-4">
+            <TouchableOpacity
+              className="bg-primary/10 border border-primary/30 rounded-xl p-4 flex-row items-center"
+              onPress={handleManualDiscover}
+              activeOpacity={0.7}
+            >
+              <IconSymbol name="magnifyingglass" size={20} color={colors.primary} />
+              <View className="flex-1 ml-3">
+                <Text className="text-sm font-semibold text-primary">競合サイトを自動検出</Text>
+                <Text className="text-xs text-muted mt-0.5">
+                  DataForSEO APIで類似サイトを自動的に発見します
+                </Text>
+              </View>
+              <IconSymbol name="chevron.right" size={16} color={colors.primary} />
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Access Share Chart */}
         {accessShareData.length > 0 && (
           <View className="mx-5 mt-5 bg-surface rounded-xl p-4 border border-border">
             <Text className="text-base font-semibold text-foreground mb-4">アクセスシェア率</Text>
             <PieChart
-              data={accessShareData.map((d, i) => ({
+              data={accessShareData.map((d) => ({
                 label: d.label,
                 value: d.value,
               }))}
@@ -167,7 +274,6 @@ export default function DashboardScreen() {
         {engagementRows.length > 0 && (
           <View className="mx-5 mt-5 bg-surface rounded-xl p-4 border border-border">
             <Text className="text-base font-semibold text-foreground mb-4">エンゲージメント サマリー</Text>
-            {/* Table Header */}
             <View className="flex-row border-b border-border pb-2 mb-1">
               <Text className="flex-1 text-[10px] font-medium text-muted">サイト</Text>
               <Text className="w-16 text-[10px] font-medium text-muted text-right">セッション</Text>
@@ -218,9 +324,7 @@ export default function DashboardScreen() {
               data={sites
                 .map((s) => {
                   const d = presetMap[s.domain];
-                  return d
-                    ? { label: d.site.name, value: d.engagement.monthlySessions }
-                    : null;
+                  return d ? { label: d.site.name, value: d.engagement.monthlySessions } : null;
                 })
                 .filter(Boolean) as { label: string; value: number }[]}
               height={180}
@@ -266,7 +370,7 @@ export default function DashboardScreen() {
 
         {/* Site List */}
         {ownSites.length > 0 && (
-          <View className="mt-6 px-5">
+          <View className="mt-5 px-5">
             <Text className="text-base font-semibold text-foreground mb-3">自社サイト</Text>
             {ownSites.map((site) => (
               <SiteCard
@@ -309,7 +413,7 @@ export default function DashboardScreen() {
               サイトが登録されていません
             </Text>
             <Text className="text-sm text-muted text-center mt-2">
-              「+」ボタンをタップして分析したいサイトを追加してください
+              「+」ボタンをタップして自社サイトを追加すると、競合サイトを自動検出します
             </Text>
           </View>
         )}
@@ -366,7 +470,7 @@ export default function DashboardScreen() {
               style={{ color: colors.foreground }}
             />
 
-            <View className="flex-row gap-3 mb-6">
+            <View className="flex-row gap-3 mb-4">
               <TouchableOpacity
                 className={`flex-1 py-3 rounded-xl border ${
                   !isOwn ? "bg-primary border-primary" : "bg-surface border-border"
@@ -391,6 +495,14 @@ export default function DashboardScreen() {
               </TouchableOpacity>
             </View>
 
+            {isOwn && (
+              <View className="bg-primary/5 border border-primary/20 rounded-xl p-3 mb-4">
+                <Text className="text-xs text-primary">
+                  自社サイトを追加すると、DataForSEO APIを使って競合サイトを自動的に5社検出します。
+                </Text>
+              </View>
+            )}
+
             <TouchableOpacity
               className="bg-primary py-4 rounded-xl"
               onPress={handleAddSite}
@@ -403,6 +515,145 @@ export default function DashboardScreen() {
                 <Text className="text-background text-center font-semibold text-base">追加する</Text>
               )}
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Competitor Discovery Modal */}
+      <Modal visible={showCompetitorModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View className="bg-background rounded-t-3xl p-6" style={styles.competitorModalContent}>
+            <View className="flex-row justify-between items-center mb-4">
+              <Text className="text-xl font-bold text-foreground">競合サイト検出</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setShowCompetitorModal(false);
+                  setDiscoveredCompetitors([]);
+                }}
+              >
+                <IconSymbol name="xmark" size={24} color={colors.muted} />
+              </TouchableOpacity>
+            </View>
+
+            {discovering ? (
+              <View className="items-center py-12">
+                <ActivityIndicator size="large" color={colors.primary} />
+                <Text className="text-sm text-muted mt-4">DataForSEO APIで競合サイトを検索中...</Text>
+                <Text className="text-xs text-muted mt-2">しばらくお待ちください</Text>
+              </View>
+            ) : discoveredCompetitors.length === 0 ? (
+              <View className="items-center py-12">
+                <IconSymbol name="magnifyingglass" size={40} color={colors.muted} />
+                <Text className="text-sm text-muted mt-4 text-center">
+                  競合サイトが見つかりませんでした。{"\n"}別のドメインでお試しください。
+                </Text>
+                <TouchableOpacity
+                  className="mt-4 bg-surface border border-border rounded-xl px-6 py-3"
+                  onPress={() => {
+                    setShowCompetitorModal(false);
+                    setDiscoveredCompetitors([]);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text className="text-foreground font-medium">閉じる</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <>
+                <Text className="text-sm text-muted mb-4">
+                  {discoveredCompetitors.length}件の競合サイトが見つかりました。追加するサイトを選択してください。
+                </Text>
+
+                <ScrollView style={{ maxHeight: 360 }}>
+                  {discoveredCompetitors.map((comp, index) => (
+                    <TouchableOpacity
+                      key={comp.domain}
+                      className={`rounded-xl p-4 mb-3 border ${
+                        comp.selected ? "bg-primary/5 border-primary/30" : "bg-surface border-border"
+                      }`}
+                      onPress={() => toggleCompetitorSelection(index)}
+                      activeOpacity={0.7}
+                    >
+                      <View className="flex-row items-center justify-between">
+                        <View className="flex-1">
+                          <Text className="text-sm font-semibold text-foreground">{comp.domain}</Text>
+                          <View className="flex-row mt-2 gap-4">
+                            <View>
+                              <Text className="text-[10px] text-muted">共通KW</Text>
+                              <Text className="text-xs font-medium text-foreground">
+                                {formatNumber(comp.intersections)}
+                              </Text>
+                            </View>
+                            <View>
+                              <Text className="text-[10px] text-muted">平均順位</Text>
+                              <Text className="text-xs font-medium text-foreground">
+                                {comp.avgPosition.toFixed(1)}
+                              </Text>
+                            </View>
+                            <View>
+                              <Text className="text-[10px] text-muted">オーガニック</Text>
+                              <Text className="text-xs font-medium text-foreground">
+                                {formatLargeNumber(comp.organicTraffic)}
+                              </Text>
+                            </View>
+                            <View>
+                              <Text className="text-[10px] text-muted">KW数</Text>
+                              <Text className="text-xs font-medium text-foreground">
+                                {formatLargeNumber(comp.organicKeywords)}
+                              </Text>
+                            </View>
+                          </View>
+                        </View>
+                        <View
+                          style={{
+                            width: 24,
+                            height: 24,
+                            borderRadius: 12,
+                            borderWidth: 2,
+                            borderColor: comp.selected ? colors.primary : colors.border,
+                            backgroundColor: comp.selected ? colors.primary : "transparent",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            marginLeft: 12,
+                          }}
+                        >
+                          {comp.selected && (
+                            <Text style={{ color: "#fff", fontSize: 14, fontWeight: "bold" }}>✓</Text>
+                          )}
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+
+                <View className="flex-row gap-3 mt-4">
+                  <TouchableOpacity
+                    className="flex-1 bg-surface border border-border py-4 rounded-xl"
+                    onPress={() => {
+                      setShowCompetitorModal(false);
+                      setDiscoveredCompetitors([]);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text className="text-foreground text-center font-medium">スキップ</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    className="flex-1 bg-primary py-4 rounded-xl"
+                    onPress={handleAddDiscoveredCompetitors}
+                    disabled={addingCompetitors}
+                    activeOpacity={0.8}
+                  >
+                    {addingCompetitors ? (
+                      <ActivityIndicator color="#FFFFFF" />
+                    ) : (
+                      <Text className="text-background text-center font-semibold">
+                        {discoveredCompetitors.filter((c) => c.selected).length}件を追加
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
           </View>
         </View>
       </Modal>
@@ -451,7 +702,6 @@ function SiteCard({
           <IconSymbol name="chevron.right" size={16} color={colors.muted} />
         </View>
       </View>
-      {/* Preset data mini summary */}
       {presetData && (
         <View className="flex-row mt-3 gap-4">
           <View>
@@ -507,5 +757,8 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     maxHeight: "80%",
+  },
+  competitorModalContent: {
+    maxHeight: "85%",
   },
 });
