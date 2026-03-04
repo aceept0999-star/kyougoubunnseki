@@ -1,22 +1,249 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import {
   ScrollView,
   Text,
   View,
   TouchableOpacity,
   ActivityIndicator,
-  FlatList,
+  TextInput,
   StyleSheet,
+  Platform,
 } from "react-native";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 import { useSites } from "@/lib/sites-context";
 import { trpc } from "@/lib/trpc";
 import { IconSymbol } from "@/components/ui/icon-symbol";
-import { BarChart, HorizontalBar, formatNumber, CHART_COLORS } from "@/components/charts";
+import { BarChart, formatNumber, CHART_COLORS } from "@/components/charts";
 
 type TabType = "ranking" | "gap";
 type GapCategory = "shared" | "ownOnly" | "competitorOnly";
+import {
+  filterKeywords,
+  sortKeywords,
+  type PositionFilter,
+  type VolumeFilter,
+  type SortField,
+  type SortDirection,
+} from "@/lib/keyword-filters";
+
+// ===== Shared Filter/Search Components =====
+
+function SearchBar({
+  value,
+  onChangeText,
+  colors,
+}: {
+  value: string;
+  onChangeText: (t: string) => void;
+  colors: ReturnType<typeof useColors>;
+}) {
+  return (
+    <View
+      style={[
+        styles.searchBar,
+        { backgroundColor: colors.surface, borderColor: colors.border },
+      ]}
+    >
+      <IconSymbol name="magnifyingglass" size={16} color={colors.muted} />
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        placeholder="キーワードを検索..."
+        placeholderTextColor={colors.muted}
+        style={[styles.searchInput, { color: colors.foreground }]}
+        returnKeyType="done"
+        autoCapitalize="none"
+        autoCorrect={false}
+      />
+      {value.length > 0 && (
+        <TouchableOpacity onPress={() => onChangeText("")} style={{ padding: 4 }}>
+          <IconSymbol name="xmark" size={14} color={colors.muted} />
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+}
+
+function FilterChip({
+  label,
+  active,
+  onPress,
+  colors,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+  colors: ReturnType<typeof useColors>;
+}) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      style={[
+        styles.filterChip,
+        {
+          backgroundColor: active ? colors.primary : colors.surface,
+          borderColor: active ? colors.primary : colors.border,
+        },
+      ]}
+      activeOpacity={0.7}
+    >
+      <Text
+        style={{
+          fontSize: 11,
+          fontWeight: "600",
+          color: active ? "#FFFFFF" : colors.foreground,
+        }}
+      >
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+function SortButton({
+  label,
+  field,
+  currentField,
+  currentDirection,
+  onPress,
+  colors,
+}: {
+  label: string;
+  field: SortField;
+  currentField: SortField;
+  currentDirection: SortDirection;
+  onPress: (field: SortField) => void;
+  colors: ReturnType<typeof useColors>;
+}) {
+  const isActive = currentField === field;
+  return (
+    <TouchableOpacity
+      onPress={() => onPress(field)}
+      style={[styles.sortButton]}
+      activeOpacity={0.7}
+    >
+      <Text
+        style={[
+          styles.thNum,
+          {
+            color: isActive ? colors.primary : colors.muted,
+            fontWeight: isActive ? "700" : "600",
+          },
+        ]}
+      >
+        {label}
+        {isActive && (currentDirection === "asc" ? " \u2191" : " \u2193")}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+function FilterBar({
+  searchQuery,
+  onSearchChange,
+  positionFilter,
+  onPositionFilterChange,
+  volumeFilter,
+  onVolumeFilterChange,
+  resultCount,
+  totalCount,
+  colors,
+}: {
+  searchQuery: string;
+  onSearchChange: (q: string) => void;
+  positionFilter: PositionFilter;
+  onPositionFilterChange: (f: PositionFilter) => void;
+  volumeFilter: VolumeFilter;
+  onVolumeFilterChange: (f: VolumeFilter) => void;
+  resultCount: number;
+  totalCount: number;
+  colors: ReturnType<typeof useColors>;
+}) {
+  const [showFilters, setShowFilters] = useState(false);
+  const hasActiveFilters = positionFilter !== "all" || volumeFilter !== "all" || searchQuery.length > 0;
+
+  return (
+    <View className="px-5 mt-4">
+      {/* Search + Filter Toggle */}
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        <View style={{ flex: 1 }}>
+          <SearchBar value={searchQuery} onChangeText={onSearchChange} colors={colors} />
+        </View>
+        <TouchableOpacity
+          onPress={() => setShowFilters(!showFilters)}
+          style={[
+            styles.filterToggle,
+            {
+              backgroundColor: hasActiveFilters ? colors.primary : colors.surface,
+              borderColor: hasActiveFilters ? colors.primary : colors.border,
+            },
+          ]}
+          activeOpacity={0.7}
+        >
+          <IconSymbol
+            name="line.3.horizontal.decrease"
+            size={18}
+            color={hasActiveFilters ? "#FFFFFF" : colors.foreground}
+          />
+        </TouchableOpacity>
+      </View>
+
+      {/* Filter Panels */}
+      {showFilters && (
+        <View className="mt-3 bg-surface rounded-xl p-3 border border-border">
+          {/* Position Filter */}
+          <Text style={{ fontSize: 11, fontWeight: "600", color: colors.muted, marginBottom: 6 }}>
+            順位フィルター
+          </Text>
+          <View style={{ flexDirection: "row", gap: 6, marginBottom: 10 }}>
+            <FilterChip label="全て" active={positionFilter === "all"} onPress={() => onPositionFilterChange("all")} colors={colors} />
+            <FilterChip label="Top 3" active={positionFilter === "top3"} onPress={() => onPositionFilterChange("top3")} colors={colors} />
+            <FilterChip label="Top 10" active={positionFilter === "top10"} onPress={() => onPositionFilterChange("top10")} colors={colors} />
+            <FilterChip label="Top 20" active={positionFilter === "top20"} onPress={() => onPositionFilterChange("top20")} colors={colors} />
+          </View>
+
+          {/* Volume Filter */}
+          <Text style={{ fontSize: 11, fontWeight: "600", color: colors.muted, marginBottom: 6 }}>
+            検索ボリューム
+          </Text>
+          <View style={{ flexDirection: "row", gap: 6 }}>
+            <FilterChip label="全て" active={volumeFilter === "all"} onPress={() => onVolumeFilterChange("all")} colors={colors} />
+            <FilterChip label="高 (1000+)" active={volumeFilter === "high"} onPress={() => onVolumeFilterChange("high")} colors={colors} />
+            <FilterChip label="中 (100-999)" active={volumeFilter === "medium"} onPress={() => onVolumeFilterChange("medium")} colors={colors} />
+            <FilterChip label="低 (<100)" active={volumeFilter === "low"} onPress={() => onVolumeFilterChange("low")} colors={colors} />
+          </View>
+
+          {/* Clear Filters */}
+          {hasActiveFilters && (
+            <TouchableOpacity
+              onPress={() => {
+                onSearchChange("");
+                onPositionFilterChange("all");
+                onVolumeFilterChange("all");
+              }}
+              style={{ marginTop: 10, alignSelf: "flex-end" }}
+              activeOpacity={0.7}
+            >
+              <Text style={{ fontSize: 12, color: colors.primary, fontWeight: "600" }}>
+                フィルターをクリア
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+
+      {/* Result Count */}
+      {hasActiveFilters && (
+        <Text style={{ fontSize: 11, color: colors.muted, marginTop: 6 }}>
+          {totalCount}件中 {resultCount}件を表示
+        </Text>
+      )}
+    </View>
+  );
+}
+
+// ===== Main Screen =====
 
 export default function KeywordsScreen() {
   const colors = useColors();
@@ -30,7 +257,6 @@ export default function KeywordsScreen() {
   const ownSites = useMemo(() => sites.filter((s) => s.isOwn), [sites]);
   const competitorSites = useMemo(() => sites.filter((s) => !s.isOwn), [sites]);
 
-  // Auto-select first available domains
   const effectiveDomain = selectedDomain || sites[0]?.domain || "";
   const effectiveOwn = ownDomain || ownSites[0]?.domain || "";
   const effectiveComp = compDomain || competitorSites[0]?.domain || "";
@@ -133,6 +359,12 @@ function KeywordRankingTab({
   onSelectDomain: (d: string) => void;
   colors: ReturnType<typeof useColors>;
 }) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [positionFilter, setPositionFilter] = useState<PositionFilter>("all");
+  const [volumeFilter, setVolumeFilter] = useState<VolumeFilter>("all");
+  const [sortField, setSortField] = useState<SortField>("position");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+
   const keywords = trpc.analysis.getDomainKeywords.useQuery(
     { domain: selectedDomain, limit: 30 },
     { enabled: !!selectedDomain }
@@ -151,6 +383,22 @@ function KeywordRankingTab({
       etv: item.ranked_serp_element?.serp_item?.etv || 0,
     }));
   }, [keywords.data]);
+
+  const filteredKeywords = useMemo(() => {
+    const filtered = filterKeywords(parsedKeywords, searchQuery, positionFilter, volumeFilter, "position");
+    return sortKeywords(filtered, sortField, sortDirection, "position");
+  }, [parsedKeywords, searchQuery, positionFilter, volumeFilter, sortField, sortDirection]);
+
+  const handleSortPress = useCallback((field: SortField) => {
+    setSortField((prev) => {
+      if (prev === field) {
+        setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
+        return prev;
+      }
+      setSortDirection(field === "position" ? "asc" : "desc");
+      return field;
+    });
+  }, []);
 
   return (
     <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
@@ -220,95 +468,106 @@ function KeywordRankingTab({
 
       {!keywords.isLoading && !keywords.isError && parsedKeywords.length > 0 && (
         <>
+          {/* Filter Bar */}
+          <FilterBar
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            positionFilter={positionFilter}
+            onPositionFilterChange={setPositionFilter}
+            volumeFilter={volumeFilter}
+            onVolumeFilterChange={setVolumeFilter}
+            resultCount={filteredKeywords.length}
+            totalCount={parsedKeywords.length}
+            colors={colors}
+          />
+
           {/* Summary */}
           <View className="flex-row px-5 mt-4 gap-3">
             <View className="flex-1 bg-surface rounded-xl p-3 border border-border">
-              <Text className="text-xs text-muted">キーワード数</Text>
+              <Text className="text-xs text-muted">表示件数</Text>
               <Text className="text-xl font-bold text-foreground mt-1">
-                {parsedKeywords.length}
+                {filteredKeywords.length}
               </Text>
             </View>
             <View className="flex-1 bg-surface rounded-xl p-3 border border-border">
               <Text className="text-xs text-muted">平均順位</Text>
               <Text className="text-xl font-bold text-primary mt-1">
-                {(parsedKeywords.reduce((s: number, k: any) => s + k.position, 0) / parsedKeywords.length).toFixed(1)}
+                {filteredKeywords.length > 0
+                  ? (filteredKeywords.reduce((s: number, k: any) => s + k.position, 0) / filteredKeywords.length).toFixed(1)
+                  : "-"}
               </Text>
             </View>
             <View className="flex-1 bg-surface rounded-xl p-3 border border-border">
               <Text className="text-xs text-muted">合計ETV</Text>
               <Text className="text-xl font-bold text-foreground mt-1">
-                {formatNumber(parsedKeywords.reduce((s: number, k: any) => s + k.etv, 0))}
+                {formatNumber(filteredKeywords.reduce((s: number, k: any) => s + k.etv, 0))}
               </Text>
             </View>
           </View>
 
           {/* Top Keywords Bar Chart */}
-          <View className="mx-5 mt-5 bg-surface rounded-xl p-4 border border-border">
-            <Text className="text-base font-semibold text-foreground mb-4">
-              検索ボリューム上位キーワード
-            </Text>
-            <BarChart
-              data={parsedKeywords.slice(0, 8).map((k: any, i: number) => ({
-                label: k.keyword.length > 8 ? k.keyword.slice(0, 8) + "…" : k.keyword,
-                value: k.searchVolume,
-                color: CHART_COLORS[i % CHART_COLORS.length],
-              }))}
-              height={180}
-            />
-          </View>
+          {filteredKeywords.length > 0 && (
+            <View className="mx-5 mt-5 bg-surface rounded-xl p-4 border border-border">
+              <Text className="text-base font-semibold text-foreground mb-4">
+                検索ボリューム上位キーワード
+              </Text>
+              <BarChart
+                data={[...filteredKeywords]
+                  .sort((a: any, b: any) => b.searchVolume - a.searchVolume)
+                  .slice(0, 8)
+                  .map((k: any, i: number) => ({
+                    label: k.keyword.length > 8 ? k.keyword.slice(0, 8) + "\u2026" : k.keyword,
+                    value: k.searchVolume,
+                    color: CHART_COLORS[i % CHART_COLORS.length],
+                  }))}
+                height={180}
+              />
+            </View>
+          )}
 
           {/* Keyword Table */}
           <View className="mx-5 mt-5 bg-surface rounded-xl p-4 border border-border">
             <Text className="text-base font-semibold text-foreground mb-4">
               キーワードランキング一覧
             </Text>
-            {/* Header */}
-            <View style={styles.tableHeader}>
+            {/* Sortable Header */}
+            <View style={[styles.tableHeader, { borderBottomColor: colors.border }]}>
               <Text style={[styles.thKeyword, { color: colors.muted }]}>キーワード</Text>
-              <Text style={[styles.thNum, { color: colors.muted }]}>順位</Text>
-              <Text style={[styles.thNum, { color: colors.muted }]}>検索量</Text>
-              <Text style={[styles.thNum, { color: colors.muted }]}>CPC</Text>
-              <Text style={[styles.thNum, { color: colors.muted }]}>競合度</Text>
+              <SortButton label="順位" field="position" currentField={sortField} currentDirection={sortDirection} onPress={handleSortPress} colors={colors} />
+              <SortButton label="検索量" field="searchVolume" currentField={sortField} currentDirection={sortDirection} onPress={handleSortPress} colors={colors} />
+              <SortButton label="CPC" field="cpc" currentField={sortField} currentDirection={sortDirection} onPress={handleSortPress} colors={colors} />
+              <SortButton label="競合度" field="competition" currentField={sortField} currentDirection={sortDirection} onPress={handleSortPress} colors={colors} />
             </View>
-            {parsedKeywords.map((kw: any, i: number) => (
-              <View
-                key={i}
-                style={[styles.tableRow, { borderBottomColor: colors.border }]}
-              >
-                <Text style={[styles.tdKeyword, { color: colors.foreground }]} numberOfLines={1}>
-                  {kw.keyword}
-                </Text>
-                <View style={styles.tdNumWrap}>
-                  <Text
-                    style={[
-                      styles.positionBadge,
-                      {
-                        backgroundColor:
-                          kw.position <= 3
-                            ? colors.success
-                            : kw.position <= 10
-                            ? colors.primary
-                            : kw.position <= 20
-                            ? colors.warning
-                            : colors.muted,
-                        color: "#FFFFFF",
-                      },
-                    ]}
-                  >
-                    {kw.position}
-                  </Text>
-                </View>
-                <Text style={[styles.tdNum, { color: colors.foreground }]}>
-                  {formatNumber(kw.searchVolume)}
-                </Text>
-                <Text style={[styles.tdNum, { color: colors.foreground }]}>
-                  {kw.cpc > 0 ? `$${kw.cpc.toFixed(2)}` : "-"}
-                </Text>
-                <Text style={[styles.tdNum, { color: colors.foreground }]}>
-                  {(kw.competition * 100).toFixed(0)}%
+            {filteredKeywords.length === 0 ? (
+              <View style={{ paddingVertical: 20, alignItems: "center" }}>
+                <Text style={{ fontSize: 13, color: colors.muted }}>
+                  条件に一致するキーワードがありません
                 </Text>
               </View>
-            ))}
+            ) : (
+              filteredKeywords.map((kw: any, i: number) => (
+                <View
+                  key={i}
+                  style={[styles.tableRow, { borderBottomColor: colors.border }]}
+                >
+                  <Text style={[styles.tdKeyword, { color: colors.foreground }]} numberOfLines={1}>
+                    {kw.keyword}
+                  </Text>
+                  <View style={styles.tdNumWrap}>
+                    <PositionBadge position={kw.position} colors={colors} />
+                  </View>
+                  <Text style={[styles.tdNum, { color: colors.foreground }]}>
+                    {formatNumber(kw.searchVolume)}
+                  </Text>
+                  <Text style={[styles.tdNum, { color: colors.foreground }]}>
+                    {kw.cpc > 0 ? `$${kw.cpc.toFixed(2)}` : "-"}
+                  </Text>
+                  <Text style={[styles.tdNum, { color: colors.foreground }]}>
+                    {(kw.competition * 100).toFixed(0)}%
+                  </Text>
+                </View>
+              ))
+            )}
           </View>
         </>
       )}
@@ -348,6 +607,12 @@ function KeywordGapTab({
   onSetGapCategory: (c: GapCategory) => void;
   colors: ReturnType<typeof useColors>;
 }) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [positionFilter, setPositionFilter] = useState<PositionFilter>("all");
+  const [volumeFilter, setVolumeFilter] = useState<VolumeFilter>("all");
+  const [sortField, setSortField] = useState<SortField>("searchVolume");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+
   const canAnalyze = !!ownDomain && !!compDomain && ownDomain !== compDomain;
 
   const gapData = trpc.analysis.getKeywordGap.useQuery(
@@ -369,7 +634,22 @@ function KeywordGapTab({
     }
   }, [gapResult, gapCategory]);
 
-  // Find site names for display
+  const filteredKeywords = useMemo(() => {
+    const filtered = filterKeywords(currentKeywords, searchQuery, positionFilter, volumeFilter, "position1");
+    return sortKeywords(filtered, sortField, sortDirection, "position1");
+  }, [currentKeywords, searchQuery, positionFilter, volumeFilter, sortField, sortDirection]);
+
+  const handleSortPress = useCallback((field: SortField) => {
+    setSortField((prev) => {
+      if (prev === field) {
+        setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
+        return prev;
+      }
+      setSortDirection(field === "position" ? "asc" : "desc");
+      return field;
+    });
+  }, []);
+
   const ownName = allSites.find((s) => s.domain === ownDomain)?.name || ownDomain;
   const compName = allSites.find((s) => s.domain === compDomain)?.name || compDomain;
 
@@ -500,7 +780,6 @@ function KeywordGapTab({
               />
             </View>
 
-            {/* Visual Gap Bar */}
             <GapBar
               shared={gapResult.shared.totalCount}
               ownOnly={gapResult.ownOnly.totalCount}
@@ -536,6 +815,21 @@ function KeywordGapTab({
             />
           </View>
 
+          {/* Filter Bar for Gap Keywords */}
+          {currentKeywords.length > 0 && (
+            <FilterBar
+              searchQuery={searchQuery}
+              onSearchChange={setSearchQuery}
+              positionFilter={positionFilter}
+              onPositionFilterChange={setPositionFilter}
+              volumeFilter={volumeFilter}
+              onVolumeFilterChange={setVolumeFilter}
+              resultCount={filteredKeywords.length}
+              totalCount={currentKeywords.length}
+              colors={colors}
+            />
+          )}
+
           {/* Keywords List */}
           {currentKeywords.length > 0 && (
             <View className="mx-5 mt-4 bg-surface rounded-xl p-4 border border-border">
@@ -548,66 +842,79 @@ function KeywordGapTab({
               </Text>
 
               {/* Search Volume Chart */}
-              <View style={{ marginBottom: 16 }}>
-                <BarChart
-                  data={currentKeywords.slice(0, 8).map((kw: any, i: number) => ({
-                    label: kw.keyword.length > 6 ? kw.keyword.slice(0, 6) + "…" : kw.keyword,
-                    value: kw.searchVolume,
-                    color: CHART_COLORS[i % CHART_COLORS.length],
-                  }))}
-                  height={160}
-                />
-              </View>
+              {filteredKeywords.length > 0 && (
+                <View style={{ marginBottom: 16 }}>
+                  <BarChart
+                    data={[...filteredKeywords]
+                      .sort((a: any, b: any) => b.searchVolume - a.searchVolume)
+                      .slice(0, 8)
+                      .map((kw: any, i: number) => ({
+                        label: kw.keyword.length > 6 ? kw.keyword.slice(0, 6) + "\u2026" : kw.keyword,
+                        value: kw.searchVolume,
+                        color: CHART_COLORS[i % CHART_COLORS.length],
+                      }))}
+                    height={160}
+                  />
+                </View>
+              )}
 
-              {/* Table Header */}
-              <View style={styles.tableHeader}>
+              {/* Sortable Table Header */}
+              <View style={[styles.tableHeader, { borderBottomColor: colors.border }]}>
                 <Text style={[styles.thKeyword, { color: colors.muted }]}>キーワード</Text>
-                <Text style={[styles.thNum, { color: colors.muted }]}>検索量</Text>
+                <SortButton label="検索量" field="searchVolume" currentField={sortField} currentDirection={sortDirection} onPress={handleSortPress} colors={colors} />
                 {gapCategory === "shared" ? (
                   <>
-                    <Text style={[styles.thNum, { color: colors.muted }]}>自社順位</Text>
-                    <Text style={[styles.thNum, { color: colors.muted }]}>競合順位</Text>
+                    <SortButton label="自社" field="position" currentField={sortField} currentDirection={sortDirection} onPress={handleSortPress} colors={colors} />
+                    <Text style={[styles.thNum, { color: colors.muted }]}>競合</Text>
                   </>
                 ) : (
                   <>
-                    <Text style={[styles.thNum, { color: colors.muted }]}>順位</Text>
-                    <Text style={[styles.thNum, { color: colors.muted }]}>CPC</Text>
+                    <SortButton label="順位" field="position" currentField={sortField} currentDirection={sortDirection} onPress={handleSortPress} colors={colors} />
+                    <SortButton label="CPC" field="cpc" currentField={sortField} currentDirection={sortDirection} onPress={handleSortPress} colors={colors} />
                   </>
                 )}
               </View>
 
-              {currentKeywords.map((kw: any, i: number) => (
-                <View
-                  key={i}
-                  style={[styles.tableRow, { borderBottomColor: colors.border }]}
-                >
-                  <Text style={[styles.tdKeyword, { color: colors.foreground }]} numberOfLines={1}>
-                    {kw.keyword}
+              {filteredKeywords.length === 0 ? (
+                <View style={{ paddingVertical: 20, alignItems: "center" }}>
+                  <Text style={{ fontSize: 13, color: colors.muted }}>
+                    条件に一致するキーワードがありません
                   </Text>
-                  <Text style={[styles.tdNum, { color: colors.foreground }]}>
-                    {formatNumber(kw.searchVolume)}
-                  </Text>
-                  {gapCategory === "shared" ? (
-                    <>
-                      <View style={styles.tdNumWrap}>
-                        <PositionBadge position={kw.position1} colors={colors} />
-                      </View>
-                      <View style={styles.tdNumWrap}>
-                        <PositionBadge position={kw.position2} colors={colors} />
-                      </View>
-                    </>
-                  ) : (
-                    <>
-                      <View style={styles.tdNumWrap}>
-                        <PositionBadge position={kw.position1} colors={colors} />
-                      </View>
-                      <Text style={[styles.tdNum, { color: colors.foreground }]}>
-                        {kw.cpc > 0 ? `$${kw.cpc.toFixed(2)}` : "-"}
-                      </Text>
-                    </>
-                  )}
                 </View>
-              ))}
+              ) : (
+                filteredKeywords.map((kw: any, i: number) => (
+                  <View
+                    key={i}
+                    style={[styles.tableRow, { borderBottomColor: colors.border }]}
+                  >
+                    <Text style={[styles.tdKeyword, { color: colors.foreground }]} numberOfLines={1}>
+                      {kw.keyword}
+                    </Text>
+                    <Text style={[styles.tdNum, { color: colors.foreground }]}>
+                      {formatNumber(kw.searchVolume)}
+                    </Text>
+                    {gapCategory === "shared" ? (
+                      <>
+                        <View style={styles.tdNumWrap}>
+                          <PositionBadge position={kw.position1} colors={colors} />
+                        </View>
+                        <View style={styles.tdNumWrap}>
+                          <PositionBadge position={kw.position2} colors={colors} />
+                        </View>
+                      </>
+                    ) : (
+                      <>
+                        <View style={styles.tdNumWrap}>
+                          <PositionBadge position={kw.position1} colors={colors} />
+                        </View>
+                        <Text style={[styles.tdNum, { color: colors.foreground }]}>
+                          {kw.cpc > 0 ? `$${kw.cpc.toFixed(2)}` : "-"}
+                        </Text>
+                      </>
+                    )}
+                  </View>
+                ))
+              )}
             </View>
           )}
 
@@ -804,12 +1111,44 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 1,
   },
+  searchBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: Platform.OS === "web" ? 10 : 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    padding: 0,
+    margin: 0,
+  },
+  filterToggle: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  filterChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+  },
+  sortButton: {
+    width: 52,
+  },
   tableHeader: {
     flexDirection: "row",
     paddingBottom: 8,
     borderBottomWidth: 1,
-    borderBottomColor: "#E5E7EB",
     marginBottom: 4,
+    alignItems: "center",
   },
   tableRow: {
     flexDirection: "row",

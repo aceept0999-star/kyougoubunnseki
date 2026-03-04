@@ -36,6 +36,7 @@ const MAPPING = {
   "arrow.up.circle.fill": "arrow-circle-up",
   "arrow.down.circle.fill": "arrow-circle-down",
   "minus.circle.fill": "remove-circle",
+  "line.3.horizontal.decrease": "filter-list",
 } as IconMapping;
 
 /**
