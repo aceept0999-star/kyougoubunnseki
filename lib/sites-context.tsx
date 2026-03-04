@@ -1,6 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { CompetitorSite } from "@/shared/types";
 import * as store from "./store";
+import { PRESET_SITES } from "./preset-data";
+
+const INIT_KEY = "preset_initialized";
 
 interface SitesContextType {
   sites: CompetitorSite[];
@@ -23,8 +26,30 @@ export function SitesProvider({ children }: { children: React.ReactNode }) {
     setLoading(false);
   }, []);
 
+  // 初回起動時にプリセットデータを自動登録
   useEffect(() => {
-    refreshSites();
+    (async () => {
+      try {
+        const AsyncStorage = (await import("@react-native-async-storage/async-storage")).default;
+        const initialized = await AsyncStorage.getItem(INIT_KEY);
+        if (!initialized) {
+          const existingSites = await store.getSites();
+          if (existingSites.length === 0) {
+            for (const preset of PRESET_SITES) {
+              await store.addSite({
+                domain: preset.domain,
+                name: preset.name,
+                isOwn: preset.isOwn,
+              });
+            }
+            await AsyncStorage.setItem(INIT_KEY, "true");
+          }
+        }
+      } catch (e) {
+        // ignore initialization errors
+      }
+      await refreshSites();
+    })();
   }, [refreshSites]);
 
   const addSite = useCallback(

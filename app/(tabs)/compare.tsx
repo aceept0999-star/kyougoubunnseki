@@ -4,15 +4,14 @@ import {
   Text,
   View,
   TouchableOpacity,
-  ActivityIndicator,
   StyleSheet,
 } from "react-native";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 import { useSites } from "@/lib/sites-context";
-import { trpc } from "@/lib/trpc";
-import { BarChart, HorizontalBar, formatNumber, CHART_COLORS } from "@/components/charts";
+import { BarChart, HorizontalBar, PieChart, formatNumber, CHART_COLORS } from "@/components/charts";
 import { IconSymbol } from "@/components/ui/icon-symbol";
+import { getPresetData, formatLargeNumber, type PresetSiteData } from "@/lib/preset-data";
 
 export default function CompareScreen() {
   const colors = useColors();
@@ -30,6 +29,10 @@ export default function CompareScreen() {
     );
   };
 
+  const selectAll = () => {
+    setSelectedIds(sites.map((s) => s.id));
+  };
+
   return (
     <ScreenContainer>
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
@@ -43,9 +46,16 @@ export default function CompareScreen() {
 
         {/* Site Selection */}
         <View className="px-5 mt-4">
-          <Text className="text-sm font-medium text-foreground mb-2">
-            比較するサイトを選択
-          </Text>
+          <View className="flex-row justify-between items-center mb-2">
+            <Text className="text-sm font-medium text-foreground">
+              比較するサイトを選択
+            </Text>
+            {sites.length > 0 && (
+              <TouchableOpacity onPress={selectAll} activeOpacity={0.7}>
+                <Text className="text-xs text-primary font-medium">全て選択</Text>
+              </TouchableOpacity>
+            )}
+          </View>
           <View className="flex-row flex-wrap gap-2">
             {sites.map((site) => {
               const isSelected = selectedIds.includes(site.id);
@@ -100,152 +110,210 @@ function ComparisonResults({
   sites,
   colors,
 }: {
-  sites: { id: string; domain: string; name: string }[];
+  sites: { id: string; domain: string; name: string; isOwn: boolean }[];
   colors: ReturnType<typeof useColors>;
 }) {
-  // Fetch data for all selected sites
-  const queries = sites.map((site) => ({
-    visits: trpc.analysis.getTotalVisits.useQuery({ domain: site.domain }),
-    bounce: trpc.analysis.getBounceRate.useQuery({ domain: site.domain }),
-    rank: trpc.analysis.getGlobalRank.useQuery({ domain: site.domain }),
-    speed: trpc.analysis.getPageSpeed.useQuery({
-      url: `https://${site.domain}`,
-      strategy: "mobile",
-    }),
-    traffic: trpc.analysis.getTrafficSources.useQuery({ domain: site.domain }),
-  }));
+  // プリセットデータを取得
+  const comparisonData = useMemo(() => {
+    return sites.map((site, i) => {
+      const preset = getPresetData(site.domain);
+      return {
+        name: site.name,
+        domain: site.domain,
+        isOwn: site.isOwn,
+        preset,
+        color: CHART_COLORS[i % CHART_COLORS.length],
+      };
+    });
+  }, [sites]);
 
-  const isLoading = queries.some(
-    (q) => q.visits.isLoading || q.bounce.isLoading || q.rank.isLoading || q.speed.isLoading
-  );
+  const hasPreset = comparisonData.some((d) => d.preset !== null);
 
-  if (isLoading) {
+  if (!hasPreset) {
     return (
-      <View className="items-center mt-12">
-        <ActivityIndicator size="large" color={colors.primary} />
-        <Text className="text-sm text-muted mt-3">比較データを取得中...</Text>
+      <View className="items-center mt-8 px-5">
+        <Text className="text-sm text-muted text-center">
+          選択されたサイトにプリセットデータがありません
+        </Text>
       </View>
     );
   }
 
-  // Parse comparison data
-  const comparisonData = sites.map((site, i) => {
-    const q = queries[i];
-    const visitsData = q.visits.data;
-    const bounceData = q.bounce.data;
-    const rankData = q.rank.data;
-    const speedData = q.speed.data;
-
-    let latestVisits = 0;
-    try {
-      const raw = visitsData?.data as any;
-      const arr = raw?.visits || raw?.data || raw;
-      if (Array.isArray(arr) && arr.length > 0) {
-        latestVisits = arr[arr.length - 1]?.visits || arr[arr.length - 1]?.value || 0;
-      }
-    } catch {}
-
-    let bounceVal = 0;
-    try {
-      const raw = bounceData?.data as any;
-      const arr = raw?.bounce_rate || raw?.data || raw;
-      if (Array.isArray(arr) && arr.length > 0) {
-        bounceVal = arr[arr.length - 1]?.bounce_rate || arr[arr.length - 1]?.value || 0;
-      } else if (typeof arr === "number") {
-        bounceVal = arr;
-      }
-    } catch {}
-
-    let rankVal = 0;
-    try {
-      const raw = rankData?.data as any;
-      const arr = raw?.global_rank || raw?.data || raw;
-      if (Array.isArray(arr) && arr.length > 0) {
-        rankVal = arr[arr.length - 1]?.global_rank || arr[arr.length - 1]?.value || 0;
-      } else if (typeof arr === "number") {
-        rankVal = arr;
-      }
-    } catch {}
-
-    const speedScore = speedData?.success && speedData.data ? speedData.data.performanceScore : 0;
-
-    return {
-      name: site.name,
-      domain: site.domain,
-      visits: latestVisits,
-      bounceRate: bounceVal,
-      globalRank: rankVal,
-      pageSpeed: speedScore,
-      color: CHART_COLORS[i % CHART_COLORS.length],
-    };
-  });
-
   return (
     <View className="mt-6">
-      {/* Visits Comparison */}
+      {/* Engagement Summary Table (like PDF P3) */}
       <View className="mx-5 bg-surface rounded-xl p-4 border border-border mb-4">
-        <Text className="text-base font-semibold text-foreground mb-4">月間訪問数比較</Text>
+        <Text className="text-base font-semibold text-foreground mb-4">エンゲージメント比較</Text>
+        {/* Header */}
+        <View className="flex-row border-b border-border pb-2 mb-1">
+          <Text className="flex-1 text-[10px] font-medium text-muted">サイト</Text>
+          <Text className="w-16 text-[10px] font-medium text-muted text-right">セッション</Text>
+          <Text className="w-14 text-[10px] font-medium text-muted text-right">UV</Text>
+          <Text className="w-12 text-[10px] font-medium text-muted text-right">滞在</Text>
+          <Text className="w-10 text-[10px] font-medium text-muted text-right">PV</Text>
+          <Text className="w-14 text-[10px] font-medium text-muted text-right">直帰率</Text>
+        </View>
+        {comparisonData.map((d, i) => {
+          const eng = d.preset?.engagement;
+          return (
+            <View key={i} className="flex-row py-2 border-b border-border items-center">
+              <View className="flex-1 flex-row items-center gap-1.5">
+                <View
+                  style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: d.color }}
+                />
+                <Text className="text-[10px] text-foreground" numberOfLines={1}>
+                  {d.name}
+                </Text>
+              </View>
+              <Text className="w-16 text-[10px] text-foreground text-right">
+                {eng ? formatLargeNumber(eng.monthlySessions) : "N/A"}
+              </Text>
+              <Text className="w-14 text-[10px] text-foreground text-right">
+                {eng ? formatLargeNumber(eng.monthlyUniqueVisitors) : "N/A"}
+              </Text>
+              <Text className="w-12 text-[10px] text-foreground text-right">
+                {eng ? eng.avgDuration : "N/A"}
+              </Text>
+              <Text className="w-10 text-[10px] text-foreground text-right">
+                {eng ? eng.avgPageViews.toFixed(1) : "N/A"}
+              </Text>
+              <Text className="w-14 text-[10px] text-foreground text-right">
+                {eng ? `${(eng.bounceRate * 100).toFixed(1)}%` : "N/A"}
+              </Text>
+            </View>
+          );
+        })}
+      </View>
+
+      {/* Access Share */}
+      <View className="mx-5 bg-surface rounded-xl p-4 border border-border mb-4">
+        <Text className="text-base font-semibold text-foreground mb-4">アクセスシェア率</Text>
+        <PieChart
+          data={comparisonData
+            .filter((d) => d.preset)
+            .map((d) => ({
+              label: d.name,
+              value: d.preset!.accessShare,
+              color: d.color,
+            }))}
+          size={200}
+        />
+      </View>
+
+      {/* Monthly Sessions Comparison */}
+      <View className="mx-5 bg-surface rounded-xl p-4 border border-border mb-4">
+        <Text className="text-base font-semibold text-foreground mb-4">月間セッション数比較</Text>
         <BarChart
-          data={comparisonData.map((d) => ({
-            label: d.name,
-            value: d.visits,
-            color: d.color,
-          }))}
+          data={comparisonData
+            .filter((d) => d.preset)
+            .map((d) => ({
+              label: d.name,
+              value: d.preset!.engagement.monthlySessions,
+              color: d.color,
+            }))}
           height={180}
         />
       </View>
 
-      {/* PageSpeed Comparison */}
+      {/* Bounce Rate Comparison */}
       <View className="mx-5 bg-surface rounded-xl p-4 border border-border mb-4">
-        <Text className="text-base font-semibold text-foreground mb-4">
-          PageSpeed スコア比較
-        </Text>
+        <Text className="text-base font-semibold text-foreground mb-4">直帰率比較</Text>
         <HorizontalBar
-          data={comparisonData.map((d) => ({
-            label: d.name,
-            value: d.pageSpeed,
-            maxValue: 100,
-            color: d.color,
-          }))}
+          data={comparisonData
+            .filter((d) => d.preset)
+            .map((d) => ({
+              label: d.name,
+              value: Math.round(d.preset!.engagement.bounceRate * 100),
+              maxValue: 100,
+              color: d.color,
+            }))}
         />
       </View>
 
-      {/* Comparison Table */}
+      {/* Channel Traffic Comparison */}
       <View className="mx-5 bg-surface rounded-xl p-4 border border-border mb-4">
-        <Text className="text-base font-semibold text-foreground mb-4">指標一覧</Text>
+        <Text className="text-base font-semibold text-foreground mb-4">総トラフィック比較</Text>
+        <BarChart
+          data={comparisonData
+            .filter((d) => d.preset)
+            .map((d) => ({
+              label: d.name,
+              value: d.preset!.channels.total,
+              color: d.color,
+            }))}
+          height={180}
+        />
+      </View>
+
+      {/* Search Traffic */}
+      <View className="mx-5 bg-surface rounded-xl p-4 border border-border mb-4">
+        <Text className="text-base font-semibold text-foreground mb-4">検索トラフィック比較</Text>
         {/* Header */}
-        <View className="flex-row border-b border-border pb-2 mb-2">
-          <Text className="flex-1 text-xs font-medium text-muted">サイト</Text>
-          <Text className="w-20 text-xs font-medium text-muted text-right">訪問数</Text>
-          <Text className="w-16 text-xs font-medium text-muted text-right">直帰率</Text>
-          <Text className="w-16 text-xs font-medium text-muted text-right">速度</Text>
+        <View className="flex-row border-b border-border pb-2 mb-1">
+          <Text className="flex-1 text-[10px] font-medium text-muted">サイト</Text>
+          <Text className="w-16 text-[10px] font-medium text-muted text-right">検索合計</Text>
+          <Text className="w-16 text-[10px] font-medium text-muted text-right">オーガニック</Text>
+          <Text className="w-12 text-[10px] font-medium text-muted text-right">有料</Text>
         </View>
-        {comparisonData.map((d, i) => (
-          <View key={i} className="flex-row py-2 border-b border-border">
-            <View className="flex-1 flex-row items-center gap-2">
-              <View
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: 4,
-                  backgroundColor: d.color,
-                }}
-              />
-              <Text className="text-xs text-foreground" numberOfLines={1}>
-                {d.name}
+        {comparisonData.map((d, i) => {
+          const st = d.preset?.searchTraffic;
+          return (
+            <View key={i} className="flex-row py-2 border-b border-border items-center">
+              <View className="flex-1 flex-row items-center gap-1.5">
+                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: d.color }} />
+                <Text className="text-[10px] text-foreground" numberOfLines={1}>{d.name}</Text>
+              </View>
+              <Text className="w-16 text-[10px] text-foreground text-right">
+                {st ? formatLargeNumber(st.total) : "N/A"}
+              </Text>
+              <Text className="w-16 text-[10px] text-foreground text-right">
+                {st ? `${st.organicPercent}%` : "N/A"}
+              </Text>
+              <Text className="w-12 text-[10px] text-foreground text-right">
+                {st ? `${st.paidPercent}%` : "N/A"}
               </Text>
             </View>
-            <Text className="w-20 text-xs text-foreground text-right">
-              {d.visits > 0 ? formatNumber(d.visits) : "N/A"}
+          );
+        })}
+      </View>
+
+      {/* Social & Display */}
+      <View className="mx-5 bg-surface rounded-xl p-4 border border-border mb-4">
+        <Text className="text-base font-semibold text-foreground mb-4">ソーシャル & ディスプレイ広告</Text>
+        <View className="flex-row border-b border-border pb-2 mb-1">
+          <Text className="flex-1 text-[10px] font-medium text-muted">サイト</Text>
+          <Text className="w-20 text-[10px] font-medium text-muted text-right">ソーシャル</Text>
+          <Text className="w-20 text-[10px] font-medium text-muted text-right">ディスプレイ</Text>
+        </View>
+        {comparisonData.map((d, i) => (
+          <View key={i} className="flex-row py-2 border-b border-border items-center">
+            <View className="flex-1 flex-row items-center gap-1.5">
+              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: d.color }} />
+              <Text className="text-[10px] text-foreground" numberOfLines={1}>{d.name}</Text>
+            </View>
+            <Text className="w-20 text-[10px] text-foreground text-right">
+              {d.preset ? d.preset.socialTraffic.toLocaleString() : "N/A"}
             </Text>
-            <Text className="w-16 text-xs text-foreground text-right">
-              {d.bounceRate > 0 ? `${(d.bounceRate * 100).toFixed(1)}%` : "N/A"}
-            </Text>
-            <Text className="w-16 text-xs text-foreground text-right">
-              {d.pageSpeed > 0 ? `${d.pageSpeed}` : "N/A"}
+            <Text className="w-20 text-[10px] text-foreground text-right">
+              {d.preset ? d.preset.displayAds.toLocaleString() : "N/A"}
             </Text>
           </View>
         ))}
+      </View>
+
+      {/* Keywords Count */}
+      <View className="mx-5 bg-surface rounded-xl p-4 border border-border mb-4">
+        <Text className="text-base font-semibold text-foreground mb-4">流入キーワード数比較</Text>
+        <BarChart
+          data={comparisonData
+            .filter((d) => d.preset)
+            .map((d) => ({
+              label: d.name,
+              value: d.preset!.totalKeywords,
+              color: d.color,
+            }))}
+          height={180}
+        />
       </View>
     </View>
   );
