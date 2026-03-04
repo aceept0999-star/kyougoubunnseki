@@ -30,6 +30,12 @@ const MAPPING = {
   "xmark": "close",
   "checkmark.circle.fill": "check-circle",
   "info.circle.fill": "info",
+  "key.fill": "vpn-key",
+  "arrow.left.arrow.right": "compare-arrows",
+  "text.magnifyingglass": "manage-search",
+  "arrow.up.circle.fill": "arrow-circle-up",
+  "arrow.down.circle.fill": "arrow-circle-down",
+  "minus.circle.fill": "remove-circle",
 } as IconMapping;
 
 /**

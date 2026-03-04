@@ -287,6 +287,130 @@ export const appRouter = router({
         }
       }),
 
+    // DataForSEO: ドメインキーワードインターセクション（共通キーワード）
+    getKeywordIntersection: publicProcedure
+      .input(
+        z.object({
+          target1: z.string(),
+          target2: z.string(),
+          locationCode: z.number().default(2392),
+          languageCode: z.string().default("ja"),
+          limit: z.number().default(50),
+          intersections: z.boolean().default(true),
+        })
+      )
+      .query(async ({ input }) => {
+        try {
+          const result = await callDataForSEO(
+            "/dataforseo_labs/google/domain_intersection/live",
+            [
+              {
+                target1: input.target1,
+                target2: input.target2,
+                location_code: input.locationCode,
+                language_code: input.languageCode,
+                limit: input.limit,
+                intersections: input.intersections,
+                item_types: ["organic"],
+                order_by: ["keyword_data.keyword_info.search_volume,desc"],
+              },
+            ]
+          );
+          // Parse response into clean keyword data
+          const tasks = result?.tasks || [];
+          const items = tasks[0]?.result?.[0]?.items || [];
+          const totalCount = tasks[0]?.result?.[0]?.total_count || 0;
+          const keywords = items.map((item: any) => ({
+            keyword: item.keyword_data?.keyword || "",
+            searchVolume: item.keyword_data?.keyword_info?.search_volume || 0,
+            cpc: item.keyword_data?.keyword_info?.cpc || 0,
+            competition: item.keyword_data?.keyword_info?.competition || 0,
+            target1Position: item.first_domain_serp_element?.se_position || null,
+            target1Etv: item.first_domain_serp_element?.etv || 0,
+            target2Position: item.second_domain_serp_element?.se_position || null,
+            target2Etv: item.second_domain_serp_element?.etv || 0,
+          }));
+          return { success: true, data: { keywords, totalCount } };
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : "Unknown error";
+          return { success: false, error: message, data: null };
+        }
+      }),
+
+    // DataForSEO: キーワードギャップ分析（3つのリクエストをまとめて実行）
+    getKeywordGap: publicProcedure
+      .input(
+        z.object({
+          ownDomain: z.string(),
+          competitorDomain: z.string(),
+          locationCode: z.number().default(2392),
+          languageCode: z.string().default("ja"),
+          limit: z.number().default(30),
+        })
+      )
+      .query(async ({ input }) => {
+        try {
+          const baseParams = {
+            location_code: input.locationCode,
+            language_code: input.languageCode,
+            limit: input.limit,
+            item_types: ["organic"],
+            order_by: ["keyword_data.keyword_info.search_volume,desc"],
+          };
+
+          // 3つのリクエストを並行実行
+          const [sharedRes, ownOnlyRes, compOnlyRes] = await Promise.all([
+            // 共通キーワード
+            callDataForSEO("/dataforseo_labs/google/domain_intersection/live", [
+              { ...baseParams, target1: input.ownDomain, target2: input.competitorDomain, intersections: true },
+            ]),
+            // 自社のみのキーワード
+            callDataForSEO("/dataforseo_labs/google/domain_intersection/live", [
+              { ...baseParams, target1: input.ownDomain, target2: input.competitorDomain, intersections: false },
+            ]),
+            // 競合のみのキーワード
+            callDataForSEO("/dataforseo_labs/google/domain_intersection/live", [
+              { ...baseParams, target1: input.competitorDomain, target2: input.ownDomain, intersections: false },
+            ]),
+          ]);
+
+          const parseItems = (res: any) => {
+            const tasks = res?.tasks || [];
+            const items = tasks[0]?.result?.[0]?.items || [];
+            const totalCount = tasks[0]?.result?.[0]?.total_count || 0;
+            return {
+              totalCount,
+              keywords: items.map((item: any) => ({
+                keyword: item.keyword_data?.keyword || "",
+                searchVolume: item.keyword_data?.keyword_info?.search_volume || 0,
+                cpc: item.keyword_data?.keyword_info?.cpc || 0,
+                competition: item.keyword_data?.keyword_info?.competition || 0,
+                position1: item.first_domain_serp_element?.se_position || null,
+                etv1: item.first_domain_serp_element?.etv || 0,
+                position2: item.second_domain_serp_element?.se_position || null,
+                etv2: item.second_domain_serp_element?.etv || 0,
+              })),
+            };
+          };
+
+          const shared = parseItems(sharedRes);
+          const ownOnly = parseItems(ownOnlyRes);
+          const compOnly = parseItems(compOnlyRes);
+
+          return {
+            success: true,
+            data: {
+              shared: { keywords: shared.keywords, totalCount: shared.totalCount },
+              ownOnly: { keywords: ownOnly.keywords, totalCount: ownOnly.totalCount },
+              competitorOnly: { keywords: compOnly.keywords, totalCount: compOnly.totalCount },
+            },
+          };
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : "Unknown error";
+          return { success: false, error: message, data: null };
+        }
+      }),
+
     // Google PageSpeed Insights
     getPageSpeed: publicProcedure
       .input(

@@ -36,6 +36,13 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="keywords"
+        options={{
+          title: "キーワード",
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="key.fill" color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="compare"
         options={{
           title: "比較",
