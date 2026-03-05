@@ -17,7 +17,7 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
 import { useSites } from "@/lib/sites-context";
 import { getPresetData, formatLargeNumber, type PresetSiteData } from "@/lib/preset-data";
-import { BarChart, PieChart, HorizontalBar, formatNumber } from "@/components/charts";
+import { BarChart, PieChart, HorizontalBar, StackedBarChart, RatioBarChart, LineChart, formatNumber } from "@/components/charts";
 import { getApiBaseUrl } from "@/constants/oauth";
 import { exportCsv, exportHtmlReport } from "@/lib/export-utils";
 import {
@@ -552,6 +552,158 @@ export default function DashboardScreen() {
                 </View>
               );
             })}
+          </View>
+        )}
+
+        {/* Search Traffic Total - 検索トラフィック合計 横棒グラフ */}
+        {hasDisplayData && (
+          <View className="mx-5 mt-5 bg-surface rounded-xl p-4 border border-border">
+            <Text className="text-base font-semibold text-foreground mb-1">検索トラフィック合計</Text>
+            <Text className="text-xs text-muted mb-4">オーガニック + 有料検索の合計トラフィック</Text>
+            <HorizontalBar
+              data={Object.values(displayData)
+                .filter((d) => {
+                  const preset = presetMap[d.domain];
+                  return preset?.searchTraffic;
+                })
+                .map((d) => {
+                  const preset = presetMap[d.domain];
+                  return {
+                    label: d.name,
+                    value: preset?.searchTraffic?.total || 0,
+                    color: d.isOwn ? colors.primary : colors.warning,
+                  };
+                })}
+            />
+          </View>
+        )}
+
+        {/* Organic vs Paid Search - オーガニック vs 有料検索比率 */}
+        {hasDisplayData && (
+          <View className="mx-5 mt-5 bg-surface rounded-xl p-4 border border-border">
+            <Text className="text-base font-semibold text-foreground mb-1">オーガニック vs 有料検索</Text>
+            <Text className="text-xs text-muted mb-4">各サイトの検索トラフィック内訳</Text>
+            <RatioBarChart
+              data={Object.values(displayData)
+                .filter((d) => presetMap[d.domain]?.searchTraffic)
+                .map((d) => {
+                  const st = presetMap[d.domain]!.searchTraffic;
+                  return {
+                    label: d.name,
+                    values: [
+                      { name: "オーガニック", value: st.organicPercent, color: "#10B981" },
+                      { name: "有料", value: st.paidPercent, color: "#F59E0B" },
+                    ],
+                  };
+                })}
+            />
+          </View>
+        )}
+
+        {/* Channel Traffic Share - チャネル別トラフィックシェア積み上げ棒グラフ */}
+        {hasDisplayData && (
+          <View className="mx-5 mt-5 bg-surface rounded-xl p-4 border border-border">
+            <Text className="text-base font-semibold text-foreground mb-1">チャネル別トラフィックシェア</Text>
+            <Text className="text-xs text-muted mb-4">各チャネルの割合を比較</Text>
+            <StackedBarChart
+              data={Object.values(displayData)
+                .filter((d) => d.channels)
+                .map((d) => {
+                  const ch = d.channels!;
+                  const total = ch.total || 1;
+                  return {
+                    label: d.name,
+                    segments: [
+                      { name: "ダイレクト", value: (ch.direct / total) * 100, color: "#1E40AF" },
+                      { name: "オーガニック", value: (ch.organicSearch / total) * 100, color: "#10B981" },
+                      { name: "リファラル", value: (ch.referral / total) * 100, color: "#8B5CF6" },
+                      { name: "有料検索", value: (ch.paidSearch / total) * 100, color: "#F59E0B" },
+                      { name: "ソーシャル", value: (ch.social / total) * 100, color: "#EC4899" },
+                      { name: "ディスプレイ", value: (ch.displayAds / total) * 100, color: "#06B6D4" },
+                    ].filter((s) => s.value > 0.1),
+                  };
+                })}
+            />
+          </View>
+        )}
+
+        {/* Display Ad Networks - ディスプレイ広告ネットワーク別シェア */}
+        {Object.values(presetMap).some((p) => p.displayAdNetworks?.length > 0) && (
+          <View className="mx-5 mt-5 bg-surface rounded-xl p-4 border border-border">
+            <Text className="text-base font-semibold text-foreground mb-1">ディスプレイ広告ネットワーク</Text>
+            <Text className="text-xs text-muted mb-4">各サイトの広告ネットワーク別シェア</Text>
+            {Object.values(displayData).map((d) => {
+              const preset = presetMap[d.domain];
+              if (!preset?.displayAdNetworks?.length) return null;
+              return (
+                <View key={d.domain} className="mb-5">
+                  <View className="flex-row items-center gap-2 mb-2">
+                    <View
+                      style={{
+                        width: 6,
+                        height: 6,
+                        borderRadius: 3,
+                        backgroundColor: d.isOwn ? colors.primary : colors.warning,
+                      }}
+                    />
+                    <Text className="text-sm font-medium text-foreground">{d.name}</Text>
+                  </View>
+                  <HorizontalBar
+                    data={preset.displayAdNetworks.map((n, i) => ({
+                      label: n.name,
+                      value: n.share,
+                      maxValue: 100,
+                      color: ["#1E40AF", "#F59E0B", "#10B981", "#EF4444", "#8B5CF6"][i % 5],
+                    }))}
+                  />
+                </View>
+              );
+            })}
+          </View>
+        )}
+
+        {/* Monthly Sessions Trend - 月間セッション数推移 */}
+        {Object.values(presetMap).some((p) => p.monthlySessionsTrend?.length > 0) && (
+          <View className="mx-5 mt-5 bg-surface rounded-xl p-4 border border-border">
+            <Text className="text-base font-semibold text-foreground mb-1">月間セッション数推移</Text>
+            <Text className="text-xs text-muted mb-4">過去12ヶ月のトラフィック推移</Text>
+            <LineChart
+              labels={["2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月", "1月"]}
+              datasets={Object.values(displayData)
+                .filter((d) => presetMap[d.domain]?.monthlySessionsTrend?.length)
+                .map((d, i) => ({
+                  label: d.name,
+                  data: presetMap[d.domain]!.monthlySessionsTrend,
+                  color: d.isOwn ? colors.primary : ["#F59E0B", "#10B981", "#EF4444", "#8B5CF6"][i % 4],
+                }))}
+              height={220}
+            />
+          </View>
+        )}
+
+        {/* Social Traffic Breakdown - ソーシャルトラフィック内訳 */}
+        {Object.values(presetMap).some((p) => p.socialBreakdown) && (
+          <View className="mx-5 mt-5 bg-surface rounded-xl p-4 border border-border">
+            <Text className="text-base font-semibold text-foreground mb-1">ソーシャルトラフィック内訳</Text>
+            <Text className="text-xs text-muted mb-4">各サイトのSNS別トラフィックシェア</Text>
+            <StackedBarChart
+              data={Object.values(displayData)
+                .filter((d) => presetMap[d.domain]?.socialBreakdown)
+                .map((d) => {
+                  const sb = presetMap[d.domain]!.socialBreakdown;
+                  return {
+                    label: d.name,
+                    segments: [
+                      { name: "YouTube", value: sb.youtube, color: "#FF0000" },
+                      { name: "Facebook", value: sb.facebook, color: "#1877F2" },
+                      { name: "Twitter", value: sb.twitter, color: "#1DA1F2" },
+                      { name: "Instagram", value: sb.instagram, color: "#E4405F" },
+                      { name: "Reddit", value: sb.reddit, color: "#FF4500" },
+                      { name: "Other", value: sb.other, color: "#9CA3AF" },
+                    ].filter((s) => s.value > 0.5),
+                  };
+                })}
+            />
           </View>
         )}
 

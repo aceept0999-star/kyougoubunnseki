@@ -296,4 +296,176 @@ function formatNumber(num: number): string {
   return Math.round(num).toString();
 }
 
+// 積み上げ横棒グラフ（チャネル別トラフィックシェア用）
+interface StackedBarChartProps {
+  data: {
+    label: string;
+    segments: { name: string; value: number; color: string }[];
+  }[];
+  height?: number;
+}
+
+export function StackedBarChart({ data, height = 280 }: StackedBarChartProps) {
+  const colors = useColors();
+  if (!data.length) return null;
+
+  const barHeight = 24;
+  const gap = 32;
+  const labelWidth = 100;
+  const chartWidth = 300;
+  const svgHeight = data.length * (barHeight + gap) + 20;
+
+  // Collect all segment names for legend
+  const segmentNames = Array.from(
+    new Set(data.flatMap((d) => d.segments.map((s) => s.name)))
+  );
+
+  return (
+    <View style={{ alignItems: "center" }}>
+      <Svg width={chartWidth} height={svgHeight} viewBox={`0 0 ${chartWidth} ${svgHeight}`}>
+        {data.map((item, i) => {
+          const total = item.segments.reduce((sum, s) => sum + s.value, 0) || 1;
+          const y = i * (barHeight + gap) + 10;
+          let currentX = labelWidth;
+          const barW = chartWidth - labelWidth - 10;
+
+          return (
+            <G key={i}>
+              <SvgText
+                x={0}
+                y={y + barHeight / 2 + 4}
+                fontSize={9}
+                fill={colors.foreground}
+              >
+                {item.label.length > 16 ? item.label.slice(0, 16) + "…" : item.label}
+              </SvgText>
+              {item.segments.map((seg, si) => {
+                const segWidth = (seg.value / total) * barW;
+                const x = currentX;
+                currentX += segWidth;
+                return (
+                  <G key={si}>
+                    <Rect
+                      x={x}
+                      y={y}
+                      width={Math.max(segWidth, 0.5)}
+                      height={barHeight}
+                      fill={seg.color}
+                    />
+                    {segWidth > 25 && (
+                      <SvgText
+                        x={x + segWidth / 2}
+                        y={y + barHeight / 2 + 3}
+                        fontSize={7}
+                        fill="#fff"
+                        textAnchor="middle"
+                        fontWeight="bold"
+                      >
+                        {seg.value.toFixed(1)}%
+                      </SvgText>
+                    )}
+                  </G>
+                );
+              })}
+            </G>
+          );
+        })}
+      </Svg>
+      {/* Legend */}
+      <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 8, marginTop: 8 }}>
+        {segmentNames.map((name, i) => {
+          const seg = data[0]?.segments.find((s) => s.name === name);
+          return (
+            <View key={i} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+              <View style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: seg?.color || CHART_COLORS[i] }} />
+              <Text style={{ fontSize: 10, color: colors.muted }}>{name}</Text>
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+// 比率棒グラフ（オーガニック vs 有料検索用）
+interface RatioBarChartProps {
+  data: {
+    label: string;
+    values: { name: string; value: number; color: string }[];
+  }[];
+  height?: number;
+}
+
+export function RatioBarChart({ data, height = 240 }: RatioBarChartProps) {
+  const colors = useColors();
+  if (!data.length) return null;
+
+  const barHeight = 20;
+  const gap = 28;
+  const labelWidth = 100;
+  const chartWidth = 300;
+  const svgHeight = data.length * (barHeight + gap) + 10;
+
+  return (
+    <View style={{ alignItems: "center" }}>
+      <Svg width={chartWidth} height={svgHeight} viewBox={`0 0 ${chartWidth} ${svgHeight}`}>
+        {data.map((item, i) => {
+          const total = item.values.reduce((sum, v) => sum + v.value, 0) || 1;
+          const y = i * (barHeight + gap) + 5;
+          let currentX = labelWidth;
+          const barW = chartWidth - labelWidth - 50;
+
+          return (
+            <G key={i}>
+              <SvgText
+                x={0}
+                y={y + barHeight / 2 + 4}
+                fontSize={9}
+                fill={colors.foreground}
+              >
+                {item.label.length > 16 ? item.label.slice(0, 16) + "…" : item.label}
+              </SvgText>
+              {item.values.map((v, vi) => {
+                const segWidth = (v.value / total) * barW;
+                const x = currentX;
+                currentX += segWidth;
+                return (
+                  <Rect
+                    key={vi}
+                    x={x}
+                    y={y}
+                    width={Math.max(segWidth, 0.5)}
+                    height={barHeight}
+                    rx={vi === 0 ? 4 : 0}
+                    fill={v.color}
+                  />
+                );
+              })}
+              {/* Percentage labels on right */}
+              <SvgText
+                x={chartWidth - 5}
+                y={y + barHeight / 2 + 4}
+                fontSize={9}
+                fill={colors.muted}
+                textAnchor="end"
+              >
+                {item.values.map((v) => `${v.value.toFixed(1)}%`).join(" / ")}
+              </SvgText>
+            </G>
+          );
+        })}
+      </Svg>
+      {/* Legend */}
+      <View style={{ flexDirection: "row", justifyContent: "center", gap: 16, marginTop: 8 }}>
+        {data[0]?.values.map((v, i) => (
+          <View key={i} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+            <View style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: v.color }} />
+            <Text style={{ fontSize: 11, color: colors.muted }}>{v.name}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 export { CHART_COLORS, formatNumber };
