@@ -20,6 +20,7 @@ import { getPresetData, formatLargeNumber, type PresetSiteData } from "@/lib/pre
 import { BarChart, PieChart, HorizontalBar, StackedBarChart, RatioBarChart, LineChart, formatNumber } from "@/components/charts";
 import { getApiBaseUrl } from "@/constants/oauth";
 import { exportCsv, exportHtmlReport } from "@/lib/export-utils";
+import { exportDashboardHtml } from "@/lib/dashboard-html-export";
 import {
   getLiveData,
   saveLiveData,
@@ -960,14 +961,14 @@ export default function DashboardScreen() {
                   <Text className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">HTMLレポート</Text>
                   <ExportButton
                     icon="doc.richtext.fill"
-                    title="競合分析レポート（HTML）"
-                    subtitle="印刷でPDF化可能な総合レポート"
+                    title="ダッシュボード全体レポート（HTML）"
+                    subtitle="全チャート・グラフ・テーブルを含む包括的レポート"
                     colors={colors}
                     onPress={async () => {
                       setExporting(true);
                       try {
-                        await exportHtmlReport(sites);
-                        Alert.alert("完了", "HTMLレポートを生成しました");
+                        await exportDashboardHtml(sites, displayData, presetMap, liveDataMap);
+                        Alert.alert("完了", "ダッシュボードHTMLレポートを生成しました");
                       } catch (e) {
                         Alert.alert("エラー", "レポート生成に失敗しました");
                       } finally {
@@ -975,6 +976,25 @@ export default function DashboardScreen() {
                       }
                     }}
                   />
+                  <View className="mt-3">
+                    <ExportButton
+                      icon="doc.text.fill"
+                      title="競合分析レポート（HTML）"
+                      subtitle="テーブル中心のシンプルなレポート"
+                      colors={colors}
+                      onPress={async () => {
+                        setExporting(true);
+                        try {
+                          await exportHtmlReport(sites);
+                          Alert.alert("完了", "HTMLレポートを生成しました");
+                        } catch (e) {
+                          Alert.alert("エラー", "レポート生成に失敗しました");
+                        } finally {
+                          setExporting(false);
+                        }
+                      }}
+                    />
+                  </View>
                 </View>
               </View>
             )}
