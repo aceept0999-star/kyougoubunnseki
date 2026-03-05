@@ -34,6 +34,10 @@ export async function removeSite(id: string): Promise<void> {
   await saveSites(filtered);
 }
 
+export async function clearAllSites(): Promise<void> {
+  await AsyncStorage.setItem(SITES_KEY, JSON.stringify([]));
+}
+
 export async function updateSite(id: string, updates: Partial<CompetitorSite>): Promise<void> {
   const sites = await getSites();
   const index = sites.findIndex((s) => s.id === id);

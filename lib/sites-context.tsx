@@ -11,6 +11,7 @@ interface SitesContextType {
   addSite: (site: Omit<CompetitorSite, "id" | "addedAt">) => Promise<CompetitorSite>;
   removeSite: (id: string) => Promise<void>;
   refreshSites: () => Promise<void>;
+  resetAllSites: () => Promise<void>;
 }
 
 const SitesContext = createContext<SitesContextType | null>(null);
@@ -66,8 +67,22 @@ export function SitesProvider({ children }: { children: React.ReactNode }) {
     setSites((prev) => prev.filter((s) => s.id !== id));
   }, []);
 
+  const resetAllSites = useCallback(async () => {
+    // 全サイトとライブデータを削除し、初期化フラグもリセット
+    await store.clearAllSites();
+    const AsyncStorage = (await import("@react-native-async-storage/async-storage")).default;
+    await AsyncStorage.removeItem(INIT_KEY);
+    // ライブデータキーを全削除
+    const allKeys = await AsyncStorage.getAllKeys();
+    const liveKeys = allKeys.filter((k) => k.startsWith("live_data_"));
+    if (liveKeys.length > 0) {
+      await AsyncStorage.multiRemove(liveKeys);
+    }
+    setSites([]);
+  }, []);
+
   return (
-    <SitesContext.Provider value={{ sites, loading, addSite, removeSite, refreshSites }}>
+    <SitesContext.Provider value={{ sites, loading, addSite, removeSite, refreshSites, resetAllSites }}>
       {children}
     </SitesContext.Provider>
   );

@@ -42,7 +42,9 @@ interface DiscoveredCompetitor {
 export default function DashboardScreen() {
   const colors = useColors();
   const router = useRouter();
-  const { sites, loading, addSite, removeSite, refreshSites } = useSites();
+  const { sites, loading, addSite, removeSite, refreshSites, resetAllSites } = useSites();
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newDomain, setNewDomain] = useState("");
   const [newName, setNewName] = useState("");
@@ -412,6 +414,14 @@ export default function DashboardScreen() {
             <Text className="text-xs font-medium text-success ml-1.5">
               {isAnyUpdating ? "更新中..." : "全サイト更新"}
             </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            className="flex-row items-center bg-error/10 border border-error/30 rounded-lg px-3 py-2"
+            onPress={() => setShowResetModal(true)}
+            activeOpacity={0.7}
+          >
+            <IconSymbol name="trash.fill" size={16} color={colors.error} />
+            <Text className="text-xs font-medium text-error ml-1.5">リセット</Text>
           </TouchableOpacity>
         </View>
 
@@ -1046,6 +1056,66 @@ export default function DashboardScreen() {
                 </View>
               </View>
             )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Reset Confirmation Modal */}
+      <Modal visible={showResetModal} animationType="fade" transparent>
+        <View style={styles.modalOverlay}>
+          <View className="bg-background rounded-2xl p-6 mx-6">
+            <View className="items-center mb-4">
+              <View
+                style={{
+                  width: 56,
+                  height: 56,
+                  borderRadius: 28,
+                  backgroundColor: colors.error + "20",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  marginBottom: 12,
+                }}
+              >
+                <IconSymbol name="trash.fill" size={28} color={colors.error} />
+              </View>
+              <Text className="text-xl font-bold text-foreground">登録サイトをリセット</Text>
+              <Text className="text-sm text-muted text-center mt-2">
+                登録された全サイトと取得データを削除します。{"\n"}新規顧客の分析を開始する際にご利用ください。{"\n"}
+                この操作は元に戻せません。
+              </Text>
+            </View>
+            <View className="flex-row gap-3 mt-2">
+              <TouchableOpacity
+                className="flex-1 bg-surface border border-border py-4 rounded-xl"
+                onPress={() => setShowResetModal(false)}
+                disabled={resetting}
+                activeOpacity={0.7}
+              >
+                <Text className="text-foreground text-center font-medium">キャンセル</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                className="flex-1 bg-error py-4 rounded-xl"
+                onPress={async () => {
+                  setResetting(true);
+                  try {
+                    await resetAllSites();
+                    setShowResetModal(false);
+                  } catch (e) {
+                    Alert.alert("エラー", "リセットに失敗しました");
+                  } finally {
+                    setResetting(false);
+                  }
+                }}
+                disabled={resetting}
+                activeOpacity={0.8}
+              >
+                {resetting ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text className="text-white text-center font-semibold">リセットする</Text>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>

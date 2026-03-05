@@ -17,7 +17,7 @@ vi.mock("@react-native-async-storage/async-storage", () => ({
   },
 }));
 
-import { getSites, saveSites, addSite, removeSite, updateSite } from "@/lib/store";
+import { getSites, saveSites, addSite, removeSite, updateSite, clearAllSites } from "@/lib/store";
 
 describe("Store - Site Management", () => {
   beforeEach(() => {
@@ -98,5 +98,19 @@ describe("Store - Site Management", () => {
     expect(sites[0].name).toBe("New Name");
     expect(sites[0].isOwn).toBe(true);
     expect(sites[0].domain).toBe("old.com");
+  });
+
+  it("should clear all sites with clearAllSites", async () => {
+    await addSite({ domain: "site1.com", name: "Site 1", isOwn: true });
+    await addSite({ domain: "site2.com", name: "Site 2", isOwn: false });
+    await addSite({ domain: "site3.com", name: "Site 3", isOwn: false });
+
+    const before = await getSites();
+    expect(before).toHaveLength(3);
+
+    await clearAllSites();
+
+    const after = await getSites();
+    expect(after).toHaveLength(0);
   });
 });
