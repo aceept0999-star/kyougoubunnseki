@@ -227,4 +227,78 @@ describe("parseApiResponse", () => {
     const result = parseApiResponse("test.com", apiData, "2025-03-01T00:00:00Z");
     expect(result.errors).toEqual(["SimilarWeb API failed", "DataForSEO timeout"]);
   });
+
+  it("should estimate sessions from DataForSEO ETV when SimilarWeb data is unavailable", () => {
+    const apiData = {
+      // SimilarWebデータなし（totalVisits、bounceRate、uniqueVisitorsなし）
+      keywords: {
+        tasks: [
+          {
+            result: [
+              {
+                items: [
+                  {
+                    keyword_data: {
+                      keyword: "補助金",
+                      keyword_info: { search_volume: 10000, cpc: 2.5 },
+                    },
+                    ranked_serp_element: {
+                      serp_item: { rank_absolute: 3, etv: 500 },
+                    },
+                  },
+                  {
+                    keyword_data: {
+                      keyword: "助成金",
+                      keyword_info: { search_volume: 8000, cpc: 1.8 },
+                    },
+                    ranked_serp_element: {
+                      serp_item: { rank_absolute: 5, etv: 300 },
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const result = parseApiResponse("test.com", apiData, "2025-03-01T00:00:00Z");
+    // SimilarWebデータなしなのでengagementはnull
+    expect(result.engagement).toBeNull();
+    // ETV合計 = 500 + 300 = 800, 推定セッション = 800 * 4.5 = 3600
+    expect(result.estimatedSessions).toBe(3600);
+    expect(result.estimatedUniqueVisitors).toBe(Math.round(3600 * 0.78));
+    expect(result.isEstimated).toBe(true);
+  });
+
+  it("should not estimate sessions when ETV is zero", () => {
+    const apiData = {
+      keywords: {
+        tasks: [
+          {
+            result: [
+              {
+                items: [
+                  {
+                    keyword_data: {
+                      keyword: "テスト",
+                      keyword_info: { search_volume: 100, cpc: 0 },
+                    },
+                    ranked_serp_element: {
+                      serp_item: { rank_absolute: 50, etv: 0 },
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const result = parseApiResponse("test.com", apiData, "2025-03-01T00:00:00Z");
+    expect(result.estimatedSessions).toBeUndefined();
+    expect(result.isEstimated).toBeUndefined();
+  });
 });

@@ -39,6 +39,10 @@ export interface LiveSiteData {
   } | null;
   globalRank: number | null;
   errors?: string[];
+  // SimilarWebデータなしの場合にDataForSEO ETVから推定したトラフィック
+  estimatedSessions?: number;
+  estimatedUniqueVisitors?: number;
+  isEstimated?: boolean;
 }
 
 function getKey(domain: string): string {
@@ -156,6 +160,24 @@ export function parseApiResponse(domain: string, apiData: any, updatedAt: string
         traffic: item.ranked_serp_element?.serp_item?.etv || 0,
       }));
     } catch {}
+  }
+
+  // SimilarWebデータがなく、DataForSEOのETVがある場合は推定トラフィックを計算
+  if (!result.engagement && result.keywords.length > 0) {
+    // ETV（推定トラフィック値）の合計をセッション数の推定値として使用
+    // DataForSEOのETVはオーガニック検索からの月間推定トラフィック数
+    // 全キーワードのETV合計は取得キーワードの一部のみなので、実際のセッション数はこれより大きい側面が多い
+    // 係数は経験則で設定（取得キーワード数に応じて増幅）
+    const totalEtv = result.keywords.reduce((sum, kw) => sum + (kw.traffic || 0), 0);
+    if (totalEtv > 0) {
+      // 取得キーワード数に応じた増幅係数（上位20キーワードのみの場合、全体の約20-30%をカバーする假定）
+      const expansionFactor = 4.5;
+      const estimatedSessions = Math.round(totalEtv * expansionFactor);
+      const estimatedUniqueVisitors = Math.round(estimatedSessions * 0.78);
+      result.estimatedSessions = estimatedSessions;
+      result.estimatedUniqueVisitors = estimatedUniqueVisitors;
+      result.isEstimated = true;
+    }
   }
 
   // Parse PageSpeed

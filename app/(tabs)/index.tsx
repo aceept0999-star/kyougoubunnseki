@@ -265,6 +265,7 @@ export default function DashboardScreen() {
       channels: { total: number; direct: number; organicSearch: number; paidSearch: number; referral: number; displayAds: number; social: number; email: number } | null;
       updatedAt: string | null;
       isLive: boolean;
+      isEstimated: boolean;
     }> = {};
 
     for (const site of sites) {
@@ -286,6 +287,25 @@ export default function DashboardScreen() {
           channels: live.channels,
           updatedAt: live.updatedAt,
           isLive: true,
+          isEstimated: false,
+        };
+      } else if (live?.estimatedSessions) {
+        // SimilarWebデータなし・DataForSEO ETVから推定
+        map[site.domain] = {
+          name: site.name,
+          domain: site.domain,
+          isOwn: site.isOwn,
+          sessions: live.estimatedSessions,
+          uniqueVisitors: live.estimatedUniqueVisitors ?? Math.round(live.estimatedSessions * 0.75),
+          duration: "--:--",
+          pageViews: 0,
+          bounceRate: 0,
+          totalPageViews: 0,
+          accessShare: 0,
+          channels: live.channels,
+          updatedAt: live.updatedAt,
+          isLive: true,
+          isEstimated: true,
         };
       } else if (preset) {
         map[site.domain] = {
@@ -302,6 +322,25 @@ export default function DashboardScreen() {
           channels: preset.channels,
           updatedAt: null,
           isLive: false,
+          isEstimated: false,
+        };
+      } else {
+        // プリセットもライブデータもない場合でも登録サイトとして表示
+        map[site.domain] = {
+          name: site.name,
+          domain: site.domain,
+          isOwn: site.isOwn,
+          sessions: 0,
+          uniqueVisitors: 0,
+          duration: "--:--",
+          pageViews: 0,
+          bounceRate: 0,
+          totalPageViews: 0,
+          accessShare: 0,
+          channels: null,
+          updatedAt: null,
+          isLive: false,
+          isEstimated: false,
         };
       }
     }
@@ -488,13 +527,22 @@ export default function DashboardScreen() {
                     <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: colors.success, marginLeft: 2 }} />
                   )}
                 </View>
-                <Text className="w-16 text-xs text-foreground text-right">
-                  {formatLargeNumber(row.sessions)}
-                </Text>
-                <Text className="w-14 text-xs text-foreground text-right">{row.duration}</Text>
-                <Text className="w-10 text-xs text-foreground text-right">{row.pageViews.toFixed(1)}</Text>
+                <View className="w-16 items-end">
+                  <Text className="text-xs text-foreground text-right">
+                    {row.sessions > 0 ? formatLargeNumber(row.sessions) : "-"}
+                  </Text>
+                  {row.isEstimated && row.sessions > 0 && (
+                    <Text className="text-[8px] text-warning">推定</Text>
+                  )}
+                </View>
                 <Text className="w-14 text-xs text-foreground text-right">
-                  {(row.bounceRate * 100).toFixed(1)}%
+                  {row.duration === "--:--" && !row.isEstimated ? "-" : row.duration}
+                </Text>
+                <Text className="w-10 text-xs text-foreground text-right">
+                  {row.pageViews > 0 ? row.pageViews.toFixed(1) : "-"}
+                </Text>
+                <Text className="w-14 text-xs text-foreground text-right">
+                  {row.bounceRate > 0 ? (row.bounceRate * 100).toFixed(1) + "%" : "-"}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -1165,6 +1213,7 @@ function SiteCard({
 }) {
   const data = liveData?.engagement || presetData?.engagement;
   const isLive = !!liveData?.engagement;
+  const isEstimated = !liveData?.engagement && !!liveData?.estimatedSessions;
   const accessShare = presetData?.accessShare;
 
   return (
@@ -1215,7 +1264,7 @@ function SiteCard({
           <IconSymbol name="chevron.right" size={16} color={colors.muted} />
         </View>
       </View>
-      {data && (
+      {data ? (
         <View className="flex-row mt-3 gap-4">
           <View>
             <Text className="text-[10px] text-muted">月間セッション</Text>
@@ -1243,6 +1292,26 @@ function SiteCard({
               </Text>
             </View>
           )}
+        </View>
+      ) : isEstimated && liveData?.estimatedSessions ? (
+        <View className="flex-row mt-3 gap-4 items-center">
+          <View>
+            <Text className="text-[10px] text-muted">月間セッション（推定）</Text>
+            <Text className="text-sm font-semibold text-foreground">
+              {formatLargeNumber(liveData.estimatedSessions)}
+            </Text>
+          </View>
+          <View className="bg-warning/10 px-2 py-0.5 rounded-full">
+            <Text className="text-[9px] text-warning font-medium">SEOデータから推定</Text>
+          </View>
+        </View>
+      ) : liveData ? (
+        <View className="mt-3">
+          <Text className="text-xs text-muted">「更新」ボタンでデータを取得してください</Text>
+        </View>
+      ) : (
+        <View className="mt-3">
+          <Text className="text-xs text-muted">「更新」ボタンでデータを取得してください</Text>
         </View>
       )}
     </TouchableOpacity>
