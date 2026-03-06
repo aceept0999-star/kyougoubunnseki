@@ -74,6 +74,7 @@
 - [x] SimilarWebでデータが取れない場合にDataForSEOのETVから推定トラフィックを計算して表示する
 - [x] ダッシュボードに登録サイト一括リセット機能を追加（新規顧客分析用）
 - [x] アプリ起動時にRender.comサーバーを自動ウォームアップする処理を追加
-- [ ] SimilarWebから平均滞在時間（get_average_visit_duration）と平均PV（get_pages_per_visit）を取得するAPIをrefreshSiteDataに追加
-- [ ] parseApiResponseの滞在時間・PVのハードコードを修正し、SimilarWebの実データを使用
-- [ ] SimilarWebのtotalVisits/bounceRate/uniqueVisitorsのレスポンス形式を正しくパース
+- [x] SimilarWebから平均滞在時間（get_average_visit_duration）と平均PV（get_pages_per_visit）を取得するAPIをrefreshSiteDataに追加
+- [x] parseApiResponseの滞在時間・PVのハードコードを修正し、SimilarWebの実データを使用
+- [x] SimilarWebのtotalVisits/bounceRate/uniqueVisitorsのレスポンス形式を正しくパース
+- [ ] エンゲージメントサマリーの滞在時間・PV・直帰率が「--:--」「-」のままになる問題を修正

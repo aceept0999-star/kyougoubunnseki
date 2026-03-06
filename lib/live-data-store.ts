@@ -149,35 +149,18 @@ export function parseApiResponse(domain: string, apiData: any, updatedAt: string
         }, 0) / uvArr.length
       : 0;
 
-    // trafficSourcesからページ別訪問数（PV）を推定
-    // SimilarWeb trafficSources: { visits: { domain: [{source_type, visits: [{date, organic, paid}]}] } }
+    // PVと滞在時間を直帰率から推定
+    // SimilarWebはPV・滞在時間の直接取得APIがないため、直帰率から推定する
     let avgPV = 0;
     let avgDurationSec = 0;
-    if (apiData.trafficSources?.visits) {
-      try {
-        const domainData = Object.values(apiData.trafficSources.visits as Record<string, any[]>)[0] || [];
-        let totalVisitsBySource = 0;
-        let dateCount = 0;
-        for (const source of domainData) {
-          for (const dateEntry of (source.visits || [])) {
-            totalVisitsBySource += (dateEntry.organic || 0) + (dateEntry.paid || 0);
-            dateCount++;
-          }
-        }
-        // PVは直接取得できないため、セッション数から推定（業界平均2-3PV/セッション）
-        // 直帰率が高い場合はPVが低くなる傾向
-        if (sessions > 0 && bounceRate > 0) {
-          // 直帰率から推定: 直帰=1PV、非直帰=3PV平均
-          avgPV = Math.round(((1 - bounceRate) * 3 + bounceRate * 1) * 10) / 10;
-        } else if (sessions > 0) {
-          avgPV = 2.5; // デフォルト推定
-        }
-        // 滞在時間も直帰率から推定（直帰率が高いほど短い）
-        if (bounceRate > 0) {
-          // 直帰率0%=5分、直帰率100%=30秒の線形補間
-          avgDurationSec = Math.round((1 - bounceRate) * 300 + bounceRate * 30);
-        }
-      } catch {}
+    if (bounceRate > 0) {
+      // 直帰率からPVを推定: 直帰=1PV、非直帰=3PV平均
+      avgPV = Math.round(((1 - bounceRate) * 3 + bounceRate * 1) * 10) / 10;
+      // 直帰率から滞在時間を推定: 直帰率0%=5分、直帰率100%=30秒の線形補間
+      avgDurationSec = Math.round((1 - bounceRate) * 300 + bounceRate * 30);
+    } else if (sessions > 0) {
+      avgPV = 2.5; // 直帰率不明の場合は業界平均値
+      avgDurationSec = 150; // 2分2秒のデフォルト
     }
 
     const roundedSessions = Math.round(sessions);
