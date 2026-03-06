@@ -124,22 +124,57 @@ export function parseApiResponse(domain: string, apiData: any, updatedAt: string
   }
 
   // Parse total visits -> engagement sessions
-  if (apiData.totalVisits || apiData.bounceRate || apiData.uniqueVisitors) {
-    const sessions = apiData.totalVisits?.visits?.[0]?.value || 0;
-    const bounceRate = apiData.bounceRate?.bounce_rate?.[0]?.value || 0;
-    const uniqueVisitors = apiData.uniqueVisitors?.unique_visitors?.[0]?.value || 0;
-    const avgDurationSec = Math.round(sessions > 0 ? 120 : 0); // default estimate
-    const avgPV = sessions > 0 ? 2.5 : 0; // default estimate
+  if (apiData.totalVisits || apiData.bounceRate || apiData.uniqueVisitors || apiData.avgVisitDuration || apiData.pagesPerVisit) {
+    // SimilarWeb visits: { visits: [{date, value}] } or { data: [{date, value}] }
+    const visitsArr = apiData.totalVisits?.visits || apiData.totalVisits?.data || [];
+    const sessions = visitsArr.length > 0
+      ? visitsArr.reduce((sum: number, v: any) => sum + (v.value || 0), 0) / visitsArr.length
+      : 0;
 
-    result.engagement = {
-      monthlySessions: sessions,
-      monthlyUniqueVisitors: uniqueVisitors,
-      avgDurationSeconds: avgDurationSec,
-      avgDuration: formatDuration(avgDurationSec),
-      avgPageViews: avgPV,
-      bounceRate,
-      totalPageViews: Math.round(sessions * avgPV),
-    };
+    // SimilarWeb bounce_rate: { bounce_rate: [{date, value}] } or { data: [{date, value}] }
+    const bounceArr = apiData.bounceRate?.bounce_rate || apiData.bounceRate?.data || [];
+    const bounceRate = bounceArr.length > 0
+      ? bounceArr.reduce((sum: number, v: any) => sum + (v.value || 0), 0) / bounceArr.length
+      : 0;
+
+    // SimilarWeb unique_visitors: { unique_visitors: [{date, value}] } or { data: [{date, value}] }
+    const uvArr = apiData.uniqueVisitors?.unique_visitors || apiData.uniqueVisitors?.data || [];
+    const uniqueVisitors = uvArr.length > 0
+      ? uvArr.reduce((sum: number, v: any) => sum + (v.value || 0), 0) / uvArr.length
+      : 0;
+
+    // SimilarWeb avg_visit_duration: { average_visit_duration: [{date, value}] } or { data: [{date, value}] }
+    const durationArr = apiData.avgVisitDuration?.average_visit_duration
+      || apiData.avgVisitDuration?.avg_visit_duration
+      || apiData.avgVisitDuration?.data || [];
+    const avgDurationSec = durationArr.length > 0
+      ? Math.round(durationArr.reduce((sum: number, v: any) => sum + (v.value || 0), 0) / durationArr.length)
+      : 0;
+
+    // SimilarWeb pages_per_visit: { pages_per_visit: [{date, value}] } or { data: [{date, value}] }
+    const ppvArr = apiData.pagesPerVisit?.pages_per_visit
+      || apiData.pagesPerVisit?.data || [];
+    const avgPV = ppvArr.length > 0
+      ? ppvArr.reduce((sum: number, v: any) => sum + (v.value || 0), 0) / ppvArr.length
+      : 0;
+
+    const roundedSessions = Math.round(sessions);
+    const roundedUV = Math.round(uniqueVisitors);
+    const roundedPV = Math.round(avgPV * 10) / 10;
+
+    // engagementはセッション数が0でも、直帰率・滞在時間・PVのどれかがあれば設定する
+    const hasAnyData = roundedSessions > 0 || bounceRate > 0 || avgDurationSec > 0 || roundedPV > 0;
+    if (hasAnyData) {
+      result.engagement = {
+        monthlySessions: roundedSessions,
+        monthlyUniqueVisitors: roundedUV,
+        avgDurationSeconds: avgDurationSec,
+        avgDuration: formatDuration(avgDurationSec),
+        avgPageViews: roundedPV,
+        bounceRate,
+        totalPageViews: Math.round(roundedSessions * (roundedPV || 1)),
+      };
+    }
   }
 
   // Parse global rank

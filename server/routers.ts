@@ -502,6 +502,40 @@ export const appRouter = router({
           errors.push(`UniqueVisitors: ${e.message}`);
         }
 
+        // 4b. SimilarWeb: Average Visit Duration
+        try {
+          const avd = await callDataApi("Similarweb/get_average_visit_duration", {
+            pathParams: { domain: input.domain },
+            query: {
+              country: "world",
+              granularity: "monthly",
+              main_domain_only: false,
+              start_date: getDefaultStartDate(),
+              end_date: getDefaultEndDate(),
+            },
+          });
+          results.avgVisitDuration = avd;
+        } catch (e: any) {
+          errors.push(`AvgVisitDuration: ${e.message}`);
+        }
+
+        // 4c. SimilarWeb: Pages Per Visit
+        try {
+          const ppv = await callDataApi("Similarweb/get_pages_per_visit", {
+            pathParams: { domain: input.domain },
+            query: {
+              country: "world",
+              granularity: "monthly",
+              main_domain_only: false,
+              start_date: getDefaultStartDate(),
+              end_date: getDefaultEndDate(),
+            },
+          });
+          results.pagesPerVisit = ppv;
+        } catch (e: any) {
+          errors.push(`PagesPerVisit: ${e.message}`);
+        }
+
         // 5. SimilarWeb: Global Rank
         try {
           const gr = await callDataApi("Similarweb/get_global_rank", {
