@@ -19,6 +19,20 @@ import type { EdgeInsets, Metrics, Rect } from "react-native-safe-area-context";
 import { trpc, createTRPCClient } from "@/lib/trpc";
 import { SitesProvider } from "@/lib/sites-context";
 import { initManusRuntime, subscribeSafeAreaInsets } from "@/lib/_core/manus-runtime";
+import { getApiBaseUrl } from "@/constants/oauth";
+
+// Render.comの無料プランはスリープするため、アプリ起動時に自動でウォームアップする
+async function warmUpServer() {
+  const baseUrl = getApiBaseUrl();
+  if (!baseUrl) return;
+  try {
+    await fetch(`${baseUrl}/api/health`, { method: "GET", signal: AbortSignal.timeout(60000) });
+    console.log("[WarmUp] Server is ready");
+  } catch {
+    // スリープ中でも次のリクエストで起動するため無視
+    console.log("[WarmUp] Server warming up...");
+  }
+}
 
 const DEFAULT_WEB_INSETS: EdgeInsets = { top: 0, right: 0, bottom: 0, left: 0 };
 const DEFAULT_WEB_FRAME: Rect = { x: 0, y: 0, width: 0, height: 0 };
@@ -37,6 +51,8 @@ export default function RootLayout() {
   // Initialize Manus runtime for cookie injection from parent container
   useEffect(() => {
     initManusRuntime();
+    // Render.comスリープ解除：アプリ起動時に自動でサーバーを起動する
+    warmUpServer();
   }, []);
 
   const handleSafeAreaUpdate = useCallback((metrics: Metrics) => {
