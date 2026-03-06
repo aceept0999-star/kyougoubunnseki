@@ -36,6 +36,8 @@ const env = {
   scheme: schemeFromBundleId,
   iosBundleId: bundleId,
   androidPackage: bundleId,
+  // API Base URL for production deployment (Render.com)
+  apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL ?? "",
 };
 
 const config: ExpoConfig = {
@@ -124,6 +126,10 @@ const config: ExpoConfig = {
   experiments: {
     typedRoutes: true,
     reactCompiler: true,
+  },
+  // Embed environment variables into the bundle for web builds
+  extra: {
+    apiBaseUrl: env.apiBaseUrl,
   },
 };
 

@@ -1,5 +1,6 @@
 import * as Linking from "expo-linking";
 import * as ReactNative from "react-native";
+import Constants from "expo-constants";
 
 // Extract scheme from bundle ID (last segment timestamp, prefixed with "manus")
 // e.g., "space.manus.my.app.t20240115103045" -> "manus20240115103045"
@@ -30,9 +31,15 @@ export const API_BASE_URL = env.apiBaseUrl;
  * URL pattern: https://PORT-sandboxid.region.domain
  */
 export function getApiBaseUrl(): string {
-  // If API_BASE_URL is set, use it
+  // If API_BASE_URL is set (env var), use it
   if (API_BASE_URL) {
     return API_BASE_URL.replace(/\/$/, "");
+  }
+
+  // Fallback: read from app.config.ts extra (for production web builds)
+  const extraApiBaseUrl = (Constants.expoConfig?.extra as any)?.apiBaseUrl as string | undefined;
+  if (extraApiBaseUrl) {
+    return extraApiBaseUrl.replace(/\/$/, "");
   }
 
   // On web, derive from current hostname by replacing port 8081 with 3000
