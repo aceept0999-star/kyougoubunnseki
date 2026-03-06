@@ -30,11 +30,15 @@ export function createTRPCClient() {
           return token ? { Authorization: `Bearer ${token}` } : {};
         },
         // Custom fetch to include credentials for cookie-based auth
+        // タイムアウトを120秒に設定（SimilarWeb API複数呼び出しに対応）
         fetch(url, options) {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 120000);
           return fetch(url, {
             ...options,
             credentials: "include",
-          });
+            signal: controller.signal,
+          }).finally(() => clearTimeout(timeoutId));
         },
       }),
     ],

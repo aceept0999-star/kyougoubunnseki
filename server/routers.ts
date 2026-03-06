@@ -435,110 +435,75 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         const results: Record<string, any> = {};
         const errors: string[] = [];
+        const startDate = getDefaultStartDate();
+        const endDate = getDefaultEndDate();
 
-        // 1. SimilarWeb: Traffic Sources
-        try {
-          const ts = await callDataApi("Similarweb/get_traffic_sources_desktop", {
+        // SimilarWebとDataForSEOのAPIを並列実行して高速化
+        const [
+          tsResult,
+          tvResult,
+          brResult,
+          uvResult,
+          grResult,
+          kwResult,
+          psResult,
+        ] = await Promise.allSettled([
+          // 1. SimilarWeb: Traffic Sources
+          callDataApi("Similarweb/get_traffic_sources_desktop", {
             pathParams: { domain: input.domain },
-            query: {
-              country: "world",
-              granularity: "monthly",
-              main_domain_only: "false",
-              start_date: getDefaultStartDate(),
-              end_date: getDefaultEndDate(),
-            },
-          });
-          results.trafficSources = ts;
-        } catch (e: any) {
-          errors.push(`TrafficSources: ${e.message}`);
-        }
-
-        // 2. SimilarWeb: Total Visits
-        try {
-          const tv = await callDataApi("Similarweb/get_visits_total", {
+            query: { country: "world", granularity: "monthly", main_domain_only: "false", start_date: startDate, end_date: endDate },
+          }),
+          // 2. SimilarWeb: Total Visits
+          callDataApi("Similarweb/get_visits_total", {
             pathParams: { domain: input.domain },
-            query: {
-              country: "world",
-              granularity: "monthly",
-              main_domain_only: "false",
-              start_date: getDefaultStartDate(),
-              end_date: getDefaultEndDate(),
-            },
-          });
-          results.totalVisits = tv;
-        } catch (e: any) {
-          errors.push(`TotalVisits: ${e.message}`);
-        }
-
-        // 3. SimilarWeb: Bounce Rate
-        try {
-          const br = await callDataApi("Similarweb/get_bounce_rate", {
+            query: { country: "world", granularity: "monthly", main_domain_only: "false", start_date: startDate, end_date: endDate },
+          }),
+          // 3. SimilarWeb: Bounce Rate
+          callDataApi("Similarweb/get_bounce_rate", {
             pathParams: { domain: input.domain },
-            query: {
-              country: "world",
-              granularity: "monthly",
-              main_domain_only: "false",
-              start_date: getDefaultStartDate(),
-              end_date: getDefaultEndDate(),
-            },
-          });
-          results.bounceRate = br;
-        } catch (e: any) {
-          errors.push(`BounceRate: ${e.message}`);
-        }
-
-        // 4. SimilarWeb: Unique Visitors
-        try {
-          const uv = await callDataApi("Similarweb/get_unique_visit", {
+            query: { country: "world", granularity: "monthly", main_domain_only: "false", start_date: startDate, end_date: endDate },
+          }),
+          // 4. SimilarWeb: Unique Visitors
+          callDataApi("Similarweb/get_unique_visit", {
             pathParams: { domain: input.domain },
-            query: {
-              main_domain_only: "false",
-              start_date: getDefaultStartDate(),
-              end_date: getDefaultEndDate(),
-            },
-          });
-          results.uniqueVisitors = uv;
-        } catch (e: any) {
-          errors.push(`UniqueVisitors: ${e.message}`);
-        }
-
-        // 5. SimilarWeb: Global Rank
-        try {
-          const gr = await callDataApi("Similarweb/get_global_rank", {
+            query: { main_domain_only: "false", start_date: startDate, end_date: endDate },
+          }),
+          // 5. SimilarWeb: Global Rank
+          callDataApi("Similarweb/get_global_rank", {
             pathParams: { domain: input.domain },
-            query: {
-              main_domain_only: "false",
-              start_date: getDefaultStartDate(),
-              end_date: getDefaultEndDate(),
-            },
-          });
-          results.globalRank = gr;
-        } catch (e: any) {
-          errors.push(`GlobalRank: ${e.message}`);
-        }
+            query: { main_domain_only: "false", start_date: startDate, end_date: endDate },
+          }),
+          // 6. DataForSEO: Domain Keywords
+          callDataForSEO("/dataforseo_labs/google/ranked_keywords/live", [{
+            target: input.domain,
+            location_code: input.locationCode,
+            language_code: input.languageCode,
+            limit: 20,
+          }]),
+          // 7. Google PageSpeed
+          callPageSpeedAPI(`https://${input.domain}`, "mobile"),
+        ]);
 
-        // 6. DataForSEO: Domain Keywords
-        try {
-          const kw = await callDataForSEO(
-            "/dataforseo_labs/google/ranked_keywords/live",
-            [
-              {
-                target: input.domain,
-                location_code: input.locationCode,
-                language_code: input.languageCode,
-                limit: 20,
-              },
-            ]
-          );
-          results.keywords = kw;
-        } catch (e: any) {
-          errors.push(`Keywords: ${e.message}`);
-        }
+        if (tsResult.status === "fulfilled") results.trafficSources = tsResult.value;
+        else errors.push(`TrafficSources: ${(tsResult as any).reason?.message}`);
 
-        // 7. Google PageSpeed
-        try {
-          const ps = await callPageSpeedAPI(`https://${input.domain}`, "mobile");
-          const lhr = ps.lighthouseResult;
+        if (tvResult.status === "fulfilled") results.totalVisits = tvResult.value;
+        else errors.push(`TotalVisits: ${(tvResult as any).reason?.message}`);
+
+        if (brResult.status === "fulfilled") results.bounceRate = brResult.value;
+        else errors.push(`BounceRate: ${(brResult as any).reason?.message}`);
+
+        if (uvResult.status === "fulfilled") results.uniqueVisitors = uvResult.value;
+        else errors.push(`UniqueVisitors: ${(uvResult as any).reason?.message}`);
+
+        if (grResult.status === "fulfilled") results.globalRank = grResult.value;
+        else errors.push(`GlobalRank: ${(grResult as any).reason?.message}`);
+
+        if (kwResult.status === "fulfilled") results.keywords = kwResult.value;
+        else errors.push(`Keywords: ${(kwResult as any).reason?.message}`);
+
+        if (psResult.status === "fulfilled") {
+          const lhr = (psResult.value as any).lighthouseResult;
           results.pageSpeed = {
             performanceScore: Math.round((lhr?.categories?.performance?.score || 0) * 100),
             metrics: {
@@ -549,8 +514,8 @@ export const appRouter = router({
               si: lhr?.audits?.["speed-index"]?.displayValue || "N/A",
             },
           };
-        } catch (e: any) {
-          errors.push(`PageSpeed: ${e.message}`);
+        } else {
+          errors.push(`PageSpeed: ${(psResult as any).reason?.message}`);
         }
 
         return {
